@@ -52,10 +52,14 @@ def port_open():
 def quit_app():
     """Quit AppVPN, then wait (max 5 s) until its proxy port stops accepting connections."""
     run("osascript", "-e", 'tell application id "local.appvpn" to quit')
-    deadline = time.time() + 5
-    while port_open() and time.time() < deadline:
-        time.sleep(0.1)
-    return not port_open()
+    for attempt in range(2):
+        deadline = time.time() + 5
+        while port_open() and time.time() < deadline:
+            time.sleep(0.1)
+        if not port_open():
+            return True
+        run("pkill", "-x", "AppVPN")  # the polite quit did not land (e.g. Apple Events not permitted on CI)
+    return False
 
 
 def proxied(url=URL):
@@ -108,10 +112,12 @@ def main():
     finally:
         probe.close()
 
-    # The fake tunnel IP is en0's own address, so the app pins the proxy to a link with real connectivity.
-    ip = run("ipconfig", "getifaddr", "en0").stdout.strip()
+    # The fake tunnel IP is the default interface's own address, so the app pins the proxy to a link with real connectivity.
+    route = run("route", "-n", "get", "default").stdout
+    iface = next((line.split()[-1] for line in route.splitlines() if "interface:" in line), "en0")
+    ip = run("ipconfig", "getifaddr", iface).stdout.strip()
     if not ip:
-        print("This test needs en0 to have an IPv4 address (used as the fake tunnel IP).")
+        print(f"This test needs {iface} to have an IPv4 address (used as the fake tunnel IP).")
         return 2
 
     if not quit_app():
