@@ -2,3 +2,8 @@
 build/
 .DS_Store
 graphify-out/
+windows/bin/
+windows/obj/
+windows/out/
+windows/check/bin/
+windows/check/obj/
