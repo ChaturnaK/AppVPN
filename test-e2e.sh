@@ -26,7 +26,8 @@ wait_for() { n=$1; shift; while [ "$n" -gt 0 ]; do "$@" && return 0; n=$((n - 1)
 quit_app() { osascript -e 'tell application id "local.appvpn" to quit' >/dev/null 2>&1 || true; sleep 1; pkill -x AppVPN 2>/dev/null || true; }
 
 cleanup() {
-    if [ "$fail" != 0 ]; then
+    if [ $? != 0 ] || [ "$fail" != 0 ]; then  # also when set -e stopped the script before any check
+        echo "--- setup"; cat "$t/setup.log" 2>/dev/null || true
         echo "--- client log"; tail -n 40 "$log" || true
         echo "--- server log"; tail -n 20 "$t/server.log" || true
         echo "--- routes"; netstat -rn -f inet | head -n 30
@@ -42,17 +43,17 @@ trap cleanup EXIT
 
 # Throwaway CA, server and client certificates.
 cd "$t"
-openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt -subj "/CN=AppVPN test CA" -days 2 2>/dev/null
+openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt -subj "/CN=AppVPN test CA" -days 2 2>>setup.log
 for n in server client; do
-    openssl req -newkey rsa:2048 -nodes -keyout $n.key -out $n.csr -subj "/CN=$n" 2>/dev/null
+    openssl req -newkey rsa:2048 -nodes -keyout $n.key -out $n.csr -subj "/CN=$n" 2>>setup.log
     printf 'keyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=%sAuth\n' $n > $n.ext
-    openssl x509 -req -in $n.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out $n.crt -days 2 -extfile $n.ext 2>/dev/null
+    openssl x509 -req -in $n.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out $n.crt -days 2 -extfile $n.ext 2>>setup.log
 done
 cd - >/dev/null
 
 # The server pushes what a real provider pushes; the client must take the address and nothing else.
 cat > "$t/server.conf" <<EOF
-dev utun
+dev tun
 proto udp
 local 127.0.0.1
 port 11940
