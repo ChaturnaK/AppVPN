@@ -4,7 +4,7 @@ A per-app OpenVPN client for macOS. It connects with a normal `.ovpn` profile, b
 
 ![AppVPN window](docs/screenshot.png)
 
-> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests. A full connection through a real tunnel (which needs the admin password) has not been verified yet. See [Verifying a real connection](#verifying-a-real-connection).
+> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests. The end-to-end test with a real tunnel needs passwordless sudo and is meant for CI; it has not had a passing run yet. See [Tests](#tests) and [Verifying a real connection](#verifying-a-real-connection).
 
 ## Requirements
 
@@ -71,7 +71,8 @@ Apps with their own SOCKS5 setting can be pointed at `127.0.0.1:18964` by hand.
 | `vpn.sh` | Root-side launcher: `check` (profile allowlist), `start`, `up` (scoped route) |
 | `build.sh` | Builds and bundles the app |
 | `make-icon.swift`, `AppIcon.icns` | Icon generator and its output |
-| `test-profiles.sh`, `test-killswitch.py` | Tests, see below |
+| `test.sh`, `test-*.sh`, `test-killswitch.py` | Tests, see below |
+| `.github/workflows/release.yml` | Test and publish a release on every push to `main` |
 
 Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `profiles/` (VPN-only browser profiles), `openvpn.log`, `mgmt.sock`. Preferences are in the `local.appvpn` defaults domain.
 
@@ -93,16 +94,31 @@ Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `pro
 
 ## Tests
 
-None of these need root or a real VPN server.
-
 ```bash
-./build.sh
-./test-profiles.sh                                          # profile store and import rules (21 checks)
-build/AppVPN.app/Contents/MacOS/AppVPN --selftest en0       # proxy paths, pinned to en0 (7 checks; quit the app first)
-python3 test-killswitch.py                                  # reconnect and blocking, incl. headless Chrome (11 checks)
+./test.sh
 ```
 
-`test-killswitch.py` plays the part of OpenVPN's management interface, quits and relaunches the app, and refuses to run while a real tunnel is up.
+`test.sh` builds the app and runs every check that must pass before a release. It quits and relaunches AppVPN and refuses to run while a tunnel is up.
+
+| Script | What it proves | Needs |
+|---|---|---|
+| `test-launcher.sh` | The profile allowlist accepts ordinary client profiles and refuses anything that could run code or touch files as root; OpenVPN accepts the options `vpn.sh` adds | Nothing (`openvpn` for the option checks) |
+| `test-profiles.sh` | Import, naming, rename, delete, URL rules, inlining of certificate files | Nothing |
+| `AppVPN --selftest <interface>` | SOCKS5 and HTTP proxy paths, DNS over the pinned interface, failing closed with no tunnel | Internet |
+| `test-killswitch.py` | Blocking before connect, while reconnecting, after OpenVPN stops and after AppVPN quits; Chrome does not fall back to a direct connection | Internet, optional Chrome |
+| `test-e2e.sh` | A real tunnel: root launcher, scoped route, untouched system routes and DNS, proxy traffic entering the tunnel while direct traffic stays out, automatic reconnect, disconnect | Passwordless `sudo` |
+
+`test-e2e.sh` starts a throwaway OpenVPN server and client on the same machine. Because OpenVPN needs root, it runs on CI and is skipped locally unless `sudo` works without a password.
+
+## Releases
+
+Every push of code to `main` runs `./test.sh` on GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)); if all checks pass, the build is published as release `v0.1.<run number>` with `AppVPN-<version>.zip` attached. Pull requests run the same tests without publishing. Changes to documentation only do not trigger a release.
+
+The app is ad-hoc signed and not notarized, so a downloaded copy has to be released from quarantine once:
+
+```bash
+xattr -dr com.apple.quarantine AppVPN.app
+```
 
 ## Verifying a real connection
 

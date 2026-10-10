@@ -1,0 +1,39 @@
+name: Release
+
+# Every push of code to main is tested and, if everything passes, published as a release.
+# Pull requests run the same tests without publishing.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: macos-26  # the UI needs the macOS 26 SDK
+    timeout-minutes: 30
+    env:
+      VERSION: 0.1.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenVPN
+        run: brew install openvpn
+
+      - name: Build and test
+        run: ./test.sh
+
+      - name: Publish release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ditto -c -k --keepParent build/AppVPN.app "AppVPN-$VERSION.zip"
+          gh release create "v$VERSION" "AppVPN-$VERSION.zip" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
+            --notes "Requires macOS 26 or later and OpenVPN 2.7+ (\`brew install openvpn\`). The app is not notarized: after unzipping, run \`xattr -dr com.apple.quarantine AppVPN.app\` once, then open it."
