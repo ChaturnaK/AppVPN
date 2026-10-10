@@ -55,58 +55,62 @@ sealed class Vpn
         return File.Exists(exe) ? exe : null;
     }
 
-    public async void Connect(string profile)
+    /// What vpn.sh "start" does on macOS: checks the profile, then starts OpenVPN as administrator (Windows asks for
+    /// approval) and returns its process id. Also `AppVPN --start <profile>`, which the end-to-end test uses.
+    public static int Start(string profile)
     {
-        void Fail(string why) { Busy = false; Detail = why; Changed?.Invoke(); }
-        if (OpenVpnExe() is not { } exe) { Fail("OpenVPN is not installed. Run the AppVPN setup program again, or install OpenVPN 2.7 from openvpn.net."); return; }
-        string[] args;
+        var exe = OpenVpnExe() ?? throw new InvalidOperationException("OpenVPN is not installed. Run the AppVPN setup program again, or install OpenVPN 2.7 from openvpn.net.");
+        var bytes = File.ReadAllBytes(profile);
+        if (Allowlist.Check(bytes) is { } bad) throw new InvalidOperationException(Allowlist.Message(bad));
+        Directory.CreateDirectory(Dir);
+        File.WriteAllText(LogPath, "");  // ours and empty, so we can read what OpenVPN appends
+        File.WriteAllText(PasswordPath, Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + "\n");
+
+        var words = ProfileStore.Words(Encoding.Latin1.GetString(bytes)).Select(w => w[0].StartsWith("--", StringComparison.Ordinal) ? [w[0][2..], .. w[1..]] : w).ToList();
+        // Old servers without cipher negotiation need the profile's cipher as fallback on OpenVPN 2.6+.
+        var cipher = words.FirstOrDefault(w => w is ["cipher", _, ..])?[1];
+        // Dead-peer detection, only if the profile sets none: OpenVPN refuses --ping next to a profile's keepalive.
+        bool ownPing = words.Any(w => w[0] is "keepalive" or "ping" or "ping-restart" or "ping-exit");
+        string[] args =
+        [
+            // ip-win32 and route-method are the two pushed settings --route-nopull lets through that change how the adapter is set up.
+            // Before --config, so a pull-filter line in the profile cannot accept them first.
+            "--pull-filter", "ignore", "ip-win32", "--pull-filter", "ignore", "route-method",
+            "--cd", Path.GetDirectoryName(Path.GetFullPath(profile))!, "--config", Path.GetFullPath(profile),
+            // --route-nopull: accept the tunnel address but none of the pushed routes, DNS servers or DNS blocking.
+            // (Those written in the profile were removed at import; Allowlist.Check has just made sure.)
+            // --route: Windows has no routes scoped to one adapter, so the tunnel gets a default route that loses to
+            // every real one. Only sockets pinned to the tunnel adapter (the app's proxy) use it.
+            "--route-nopull", "--route", "0.0.0.0", "0.0.0.0", "vpn_gateway", "9000",
+            // --persist-tun: keep the tunnel adapter up across automatic restarts.
+            // --connect-retry / --resolv-retry: retry forever after a lost connection, 2 s apart, slowing to 30 s after repeated failures.
+            "--persist-tun", "--connect-retry", "2", "30", "--resolv-retry", "infinite", .. ownPing ? (string[])[] : ["--ping", "10", "--ping-restart", "60"],
+            // --management-hold: wait for the app to attach, so it sees every state change and error.
+            "--management", "127.0.0.1", $"{ManagementPort}", PasswordPath, "--management-hold",
+            "--log-append", LogPath, "--verb", "3", .. cipher == null ? (string[])[] : ["--data-ciphers-fallback", cipher],
+        ];
         try
         {
-            var bytes = File.ReadAllBytes(profile);
-            if (Allowlist.Check(bytes) is { } bad) { Fail(Allowlist.Message(bad)); return; }
-            Directory.CreateDirectory(Dir);
-            File.WriteAllText(LogPath, "");  // ours and empty, so we can read what OpenVPN appends
-            File.WriteAllText(PasswordPath, Convert.ToHexString(RandomNumberGenerator.GetBytes(16)) + "\n");
-
-            var words = ProfileStore.Words(Encoding.Latin1.GetString(bytes)).Select(w => w[0].StartsWith("--", StringComparison.Ordinal) ? [w[0][2..], .. w[1..]] : w).ToList();
-            // Old servers without cipher negotiation need the profile's cipher as fallback on OpenVPN 2.6+.
-            var cipher = words.FirstOrDefault(w => w is ["cipher", _, ..])?[1];
-            // Dead-peer detection, only if the profile sets none: OpenVPN refuses --ping next to a profile's keepalive.
-            bool ownPing = words.Any(w => w[0] is "keepalive" or "ping" or "ping-restart" or "ping-exit");
-            args =
-            [
-                // ip-win32 and route-method are the two pushed settings --route-nopull lets through that change how the adapter is set up.
-                // Before --config, so a pull-filter line in the profile cannot accept them first.
-                "--pull-filter", "ignore", "ip-win32", "--pull-filter", "ignore", "route-method",
-                "--cd", Path.GetDirectoryName(profile)!, "--config", profile,
-                // --route-nopull: accept the tunnel address but none of the pushed routes, DNS servers or DNS blocking.
-                // (Those written in the profile were removed at import; Allowlist.Check has just made sure.)
-                // --route: Windows has no routes scoped to one adapter, so the tunnel gets a default route that loses to
-                // every real one. Only sockets pinned to the tunnel adapter (the app's proxy) use it.
-                "--route-nopull", "--route", "0.0.0.0", "0.0.0.0", "vpn_gateway", "9000",
-                // --persist-tun: keep the tunnel adapter up across automatic restarts.
-                // --connect-retry / --resolv-retry: retry forever after a lost connection, 2 s apart, slowing to 30 s after repeated failures.
-                "--persist-tun", "--connect-retry", "2", "30", "--resolv-retry", "infinite", .. ownPing ? (string[])[] : ["--ping", "10", "--ping-restart", "60"],
-                // --management-hold: wait for the app to attach, so it sees every state change and error.
-                "--management", "127.0.0.1", $"{ManagementPort}", PasswordPath, "--management-hold",
-                "--log-append", LogPath, "--verb", "3", .. cipher == null ? (string[])[] : ["--data-ciphers-fallback", cipher],
-            ];
+            using var p = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
+            return p?.Id ?? 0;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Fail(e.Message); return; }
+        catch (Win32Exception e) { throw new InvalidOperationException(e.NativeErrorCode == 1223 ? "Administrator approval was cancelled." : "Couldn't start OpenVPN: " + e.Message); }
+    }
 
+    public async void Connect(string profile)
+    {
         Busy = true;
         Detail = "";
         dns = null;  // the last profile's server must not answer for this one
         Changed?.Invoke();
-        try
+        try { startedPid = await Task.Run(() => Start(profile)); }
+        catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            startedPid = await Task.Run(() =>
-            {
-                using var p = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
-                return p?.Id ?? 0;
-            });
+            Busy = false;
+            Detail = e.Message;
+            Changed?.Invoke();
+            return;
         }
-        catch (Win32Exception e) { Fail(e.NativeErrorCode == 1223 ? "Administrator approval was cancelled." : "Couldn't start OpenVPN: " + e.Message); return; }
         await Attach(retries: 40);
     }
 
@@ -145,13 +149,19 @@ sealed class Vpn
         Busy = false;
         string password = "";
         try { password = File.ReadAllText(PasswordPath).Trim(); } catch (IOException) { }
-        // --management-hold re-arms on every restart (ping-restart, SIGUSR1); without `hold off` the first automatic reconnect would wait for a release forever.
-        Send($"{password}\nstate on\nstate\nlog on all\nhold off\nhold release\n");
+        Send(password + "\n");
         Changed?.Invoke();
         try
         {
             using var reader = new StreamReader(mgmt, Encoding.Latin1);
-            while (await reader.ReadLineAsync() is { } l) Line(l);
+            while (await reader.ReadLineAsync() is { } l)
+            {
+                // Only once OpenVPN has greeted us. Sent in one piece with the password, the release is read before
+                // OpenVPN starts waiting for it, and it then waits forever.
+                // --management-hold re-arms on every restart (ping-restart, SIGUSR1); without `hold off` the first automatic reconnect would wait for a release forever.
+                if (l.StartsWith(">INFO:", StringComparison.Ordinal)) Send("state on\nstate\nlog on all\nhold off\nhold release\n");
+                Line(l);
+            }
         }
         catch (IOException) { }
         mgmt = null;

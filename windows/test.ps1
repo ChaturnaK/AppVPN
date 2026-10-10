@@ -60,5 +60,14 @@ Get-Process AppVPN -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep 1
 Run-App '--selftest', (Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1).ifIndex
 
+& "$PSScriptRoot\test-killswitch.ps1"
+if ($LASTEXITCODE -ne 0) { $failed = $true }
+
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')
+if ($elevated -and (Test-Path 'HKLM:\SOFTWARE\OpenVPN')) {
+    & "$PSScriptRoot\test-e2e.ps1"
+    if ($LASTEXITCODE -ne 0) { $failed = $true }
+} else { Write-Host 'skip end-to-end test (needs an elevated PowerShell and OpenVPN installed; it runs on CI)' }
+
 if ($failed) { Write-Host 'Some checks FAILED.'; exit 1 }
 Write-Host 'All checks passed.'
