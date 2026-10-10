@@ -121,6 +121,8 @@ Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `pro
 
 ## Windows
 
+![AppVPN window on Windows](docs/screenshot-windows.png)
+
 The Windows app lives in `windows/` (C#, WPF, no packages beyond .NET). It has the same window, the same proxy on `127.0.0.1:18964` and the same guarantees: only apps launched from AppVPN use the tunnel, and they are blocked, never sent direct, while the tunnel is down.
 
 ### Install, build and run
