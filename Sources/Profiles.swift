@@ -310,7 +310,7 @@ func profileSelfTest(dir: String) -> Int32 {
     report("delete Work moves it to the Trash", trashed != nil && store.names() == ["good"])
     if let trashed { try? FileManager.default.removeItem(at: trashed) }  // our own dummy file: keep the Trash clean
     rejected("route-up directive is refused", "route-up", fileImport("script.ovpn"))
-    rejected("quoted directive name is refused", "'up'", fileImport("quoted.ovpn"))
+    rejected("quoted directive name is refused", "quotes or backslashes", fileImport("quoted.ovpn"))
     rejected("setenv opt cannot smuggle a directive", "'up'", fileImport("setenvopt.ovpn"))
     rejected("unknown inline block is refused", "'<up>'", fileImport("block.ovpn"))
     rejected("file outside the profile's folder is not inlined", "separate file", fileImport("outside.ovpn"))
