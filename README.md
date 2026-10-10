@@ -4,7 +4,7 @@ A per-app OpenVPN client for macOS. It connects with a normal `.ovpn` profile, b
 
 ![AppVPN window](docs/screenshot.png)
 
-> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests, and CI exercises a real tunnel end to end. See [Tests](#tests) and [Verifying a real connection](#verifying-a-real-connection).
+> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests. The end-to-end test with a real tunnel needs passwordless sudo and is meant for CI; it has not had a passing run yet. See [Tests](#tests) and [Verifying a real connection](#verifying-a-real-connection).
 
 ## Requirements
 
