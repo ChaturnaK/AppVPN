@@ -2,7 +2,7 @@
 # tunnel, and the app must not believe a stranger on the management port. The checks that need a tunnel
 # (traffic flows, blocks while reconnecting, resumes) are in test-e2e.ps1. Run after a build.
 # Prints one line per check and exits 1 if any check failed (2 if the test cannot run safely).
-$app = "$PSScriptRoot\out\app\AppVPN.exe"
+param([string]$App = "$PSScriptRoot\out\app\AppVPN.exe")
 $port = 18964
 $mgmt = 18965
 $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"

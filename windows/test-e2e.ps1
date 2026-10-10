@@ -1,7 +1,7 @@
 # End-to-end test with a real OpenVPN server and client on this PC: tunnel, tunnel route, per-app routing through
 # the proxy, automatic reconnect and disconnect. Needs an elevated PowerShell in the account that is signed in,
 # and OpenVPN installed (CI). It brings up tunnel adapters and routes and removes them again. Run after a build.
-$app = "$PSScriptRoot\out\app\AppVPN.exe"
+param([string]$App = "$PSScriptRoot\out\app\AppVPN.exe")
 $dir = "$env:LOCALAPPDATA\AppVPN"
 $log = "$dir\openvpn.log"
 $proxy = '127.0.0.1:18964'

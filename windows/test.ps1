@@ -1,10 +1,11 @@
 # Every check that must pass before a release, like test.sh on macOS. It closes and restarts AppVPN and refuses
 # to run while a tunnel is up. The end-to-end test needs an elevated PowerShell and OpenVPN installed: it runs
 # on CI and is skipped elsewhere unless both are there.
-# With the .NET SDK present it builds the app first; otherwise it tests the build already in out\app.
+# With the .NET SDK present it builds the app first; otherwise it tests the build already in out\app
+# (or the AppVPN.exe given, such as an installed one).
+param([string]$App = "$PSScriptRoot\out\app\AppVPN.exe")
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-$app = "$PSScriptRoot\out\app\AppVPN.exe"
 $failed = $false
 
 if (Get-Process openvpn -ErrorAction SilentlyContinue) { Write-Host 'OpenVPN is running: disconnect first.'; exit 2 }
@@ -20,8 +21,7 @@ function Run-App([string[]]$arguments) {
 function Text($path, $text) { [IO.File]::WriteAllText($path, $text) }  # exact bytes: no byte-order mark, no CRLF
 
 if (Get-Command dotnet -ErrorAction SilentlyContinue) {
-    dotnet publish -c Release -o out\app --nologo -v quiet
-    if ($LASTEXITCODE -ne 0) { exit 1 }
+    & "$PSScriptRoot\build.ps1"
     if (Get-Command sh -ErrorAction SilentlyContinue) {
         $cases = Join-Path ([IO.Path]::GetTempPath()) "appvpn-cases-$PID"
         sh check/export-cases.sh ($cases -replace '\\', '/')
@@ -60,12 +60,12 @@ Get-Process AppVPN -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep 1
 Run-App '--selftest', (Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1).ifIndex
 
-& "$PSScriptRoot\test-killswitch.ps1"
+& "$PSScriptRoot\test-killswitch.ps1" $App
 if ($LASTEXITCODE -ne 0) { $failed = $true }
 
 $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole('Administrators')
 if ($elevated -and (Test-Path 'HKLM:\SOFTWARE\OpenVPN')) {
-    & "$PSScriptRoot\test-e2e.ps1"
+    & "$PSScriptRoot\test-e2e.ps1" $App
     if ($LASTEXITCODE -ne 0) { $failed = $true }
 } else { Write-Host 'skip end-to-end test (needs an elevated PowerShell and OpenVPN installed; it runs on CI)' }
 

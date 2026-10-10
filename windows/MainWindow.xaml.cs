@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
@@ -15,10 +16,17 @@ namespace AppVPN;
 /// How much of an app's traffic the proxy can capture: Windows has no per-app VPN for ordinary programs either.
 enum Coverage { Full, Partial, EnvOnly }
 
+/// An icon-font glyph. It is decoration next to text that says the same, so screen readers don't get to see it.
+public sealed class Icon : TextBlock
+{
+    protected override AutomationPeer? OnCreateAutomationPeer() => null;
+}
+
 /// One row of the app list.
 record AppRow(string Path, string Name, ImageSource? Icon, Coverage Coverage, bool CanLaunch)
 {
-    public string Symbol => Coverage switch { Coverage.Full => "\uE73E", Coverage.Partial => "\uE9D9", _ => "\uE7BA" };
+    public override string ToString() => $"{Name}, {Summary}";  // what a screen reader calls the row
+    public string Symbol => Coverage switch { Coverage.Full => "\uE73E", Coverage.Partial => "\uE774", _ => "\uE7BA" };
     public Brush Tint => Coverage switch { Coverage.Full => Brushes.Green, Coverage.Partial => Brushes.Gray, _ => Brushes.DarkOrange };
     /// One visible line per level, so the caveat doesn't hide in a tooltip.
     public string Summary => Coverage switch { Coverage.Full => "All traffic and DNS", Coverage.Partial => "Web traffic only", _ => "May bypass the VPN" };
@@ -124,7 +132,7 @@ public partial class MainWindow : Window
             : up ? "They stay offline until the tunnel is up."
             : "Connect, then launch them from here to send them through the tunnel.";
         AppScroll.Visibility = settings.Apps.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        AppList.ItemsSource = settings.Apps.Select(app => new AppRow(app, Path.GetFileNameWithoutExtension(app), IconOf(app), CoverageOf(app), vpn.Connected)).ToList();
+        AppList.ItemsSource = settings.Apps.Select(app => new AppRow(app, NameOf(app), IconOf(app), CoverageOf(app), vpn.Connected)).ToList();
     }
 
     void Reload()
@@ -297,6 +305,13 @@ public partial class MainWindow : Window
         Launch(app.Path);
     }
 
+    /// The product name the program carries ("Microsoft Edge"), or its file name.
+    static string NameOf(string app)
+    {
+        try { if (FileVersionInfo.GetVersionInfo(app).FileDescription is { Length: > 0 } name) return name; } catch (IOException) { }
+        return Path.GetFileNameWithoutExtension(app);
+    }
+
     static Process[] Running(string app) => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(app));
 
     void Launch(string app)
@@ -315,7 +330,7 @@ public partial class MainWindow : Window
             if (coverage == Coverage.Full) start.ArgumentList.Add($"--user-data-dir={Path.Combine(Vpn.Dir, "profiles", Path.GetFileNameWithoutExtension(app))}");
         }
         try { Process.Start(start)?.Dispose(); }
-        catch (Win32Exception e) { Problem($"Couldn't Launch {Path.GetFileNameWithoutExtension(app)}", e.Message); }
+        catch (Win32Exception e) { Problem($"Couldn't Launch {NameOf(app)}", e.Message); }
     }
 
     /// Electron apps carry resources\app.asar (or an unpacked resources\app); Chromium browsers carry chrome_elf.dll
