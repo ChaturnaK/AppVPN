@@ -1,7 +1,7 @@
 name: Release
 
-# Every push of code to main is tested and, if everything passes, published as a release.
-# Pull requests run the same tests without publishing.
+# Every push of code to main is tested on macOS and on Windows and, if everything passes on both, published as
+# a release. Pull requests run the same tests without publishing.
 on:
   push:
     branches: [main]
@@ -14,12 +14,13 @@ permissions:
 concurrency:
   group: release-${{ github.ref }}
 
+env:
+  VERSION: 0.1.${{ github.run_number }}
+
 jobs:
-  release:
+  mac:
     runs-on: macos-26  # the UI needs the macOS 26 SDK
     timeout-minutes: 30
-    env:
-      VERSION: 0.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,11 +30,62 @@ jobs:
       - name: Build and test
         run: ./test.sh
 
-      - name: Publish release
+      - name: Package the disk image
         if: github.event_name == 'push'
+        run: ./build.sh dmg
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: mac
+          path: build/AppVPN-${{ env.VERSION }}.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell  # Windows PowerShell 5.1, the one every Windows PC has
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install OpenVPN (the version the setup program carries)
+        run: windows\build.ps1 openvpn
+
+      - name: Build and test
+        run: windows\test.ps1
+
+      - name: Package the setup program
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe")) { choco install innosetup -y --no-progress }
+          windows\build.ps1 installer
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with:
+          name: windows
+          path: windows/out/AppVPN-${{ env.VERSION }}-setup.exe
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push'
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ./build.sh dmg
-          gh release create "v$VERSION" "build/AppVPN-$VERSION.dmg" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
-            --notes "Open the disk image and drag AppVPN to Applications. Requires macOS 26 or later on Apple silicon; OpenVPN is included. The app is not notarized: run \`xattr -dr com.apple.quarantine /Applications/AppVPN.app\` once before the first launch."
+          gh release create "v$VERSION" "AppVPN-$VERSION.dmg" "AppVPN-$VERSION-setup.exe" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
+            --notes "**macOS** (26 or later, Apple silicon): open the disk image and drag AppVPN to Applications; OpenVPN is included. The app is not notarized: run \`xattr -dr com.apple.quarantine /Applications/AppVPN.app\` once before the first launch.
+
+          **Windows** (11, x64 or ARM): run the setup program. It also installs OpenVPN if the PC has none. It is not code-signed, so Windows SmartScreen asks before running it (More info, Run anyway)."
