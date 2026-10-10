@@ -38,6 +38,7 @@ allowed "connection block" '<connection>\nremote b.example.com 443 tcp\n</connec
 allowed "proxy without a credentials file" 'http-proxy proxy.example.com 8080\nsocks-proxy 127.0.0.1 1080\n'
 allowed "directives after an inline block" '<ca>\nabc\n</ca>\nnobind\nverb 3\n'
 allowed "trailing comments" 'verb 3 # note\nremote b.example.com 443 ; backup\n'
+allowed "quotes and backslashes inside a comment" '# don\047t "edit" this\\\nverb 3 # it\047s fine\n'
 allowed "comment line starting with ;" '; just a note\n'
 allowed "tabs between arguments" 'verb\t3\nkeepalive\t10\t60\n'
 allowed "CRLF line endings around an inline block" '<ca>\r\nabc\r\n</ca>\r\nverb 3\r\n'
@@ -64,6 +65,8 @@ refused "unknown directive" 'frobnicate 1\n' "'frobnicate'"
 
 # Where awk and OpenVPN read a profile differently, a directive can hide from the allowlist.
 refused "closing tag with text glued on, then a forbidden directive" '<ca>\nabc\n</ca>x\nup /tmp/x.sh\n' "'up'"
+refused "quote before a comment marker" 'verb "3 # note"\n' "quotes or backslashes"
+refused "certificate block opened inside a connection block" '<connection>\n<ca>\n</connection>\nup /tmp/x.sh\n</ca>\n' "inside <connection>"
 refused "unterminated inline block" '<ca>\nabc\nup /tmp/x.sh\n' "unterminated <ca> block"
 refused "opening tag followed by more text" '<ca> extra\nup /tmp/x.sh\n</ca>\n' "'<ca>'"
 refused "opening tag with leading dashes" '--<ca>\nup /tmp/x.sh\n</ca>\n' "'<ca>'"

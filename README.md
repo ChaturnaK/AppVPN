@@ -82,7 +82,7 @@ Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `pro
 
 ## Security model
 
-- **Profiles are untrusted and OpenVPN runs as root**, so `vpn.sh check` is an allowlist: only ordinary client directives pass. Anything that runs code, loads a library, reads or writes other files, or is unknown is refused, with the directive named in the error. The same check runs at import and again at connect.
+- **Profiles are untrusted and OpenVPN runs as root**, so `vpn.sh check` is an allowlist: only ordinary client directives pass. Anything that runs code, loads a library, reads or writes other files, or is unknown is refused, with the directive named in the error. The validator reads a profile exactly the way OpenVPN does, and it achieves that by refusing input where the two could disagree: quoted or backslash-escaped arguments, control characters, lines of 250 characters or more, and malformed or unterminated certificate blocks. The same check runs at import and again at connect.
 - Imports must be UTF-8, at most 1 MB, contain a `remote` line and not be an HTML page. Certificate and key files referenced by a profile are inlined only if they sit in the profile's own folder. URL imports must be https.
 - Profiles needing a username and password (`auth-user-pass`) are not supported and are refused at import.
 - The management socket is restricted to the user who started the connection.

@@ -12,8 +12,8 @@ check)
     # never applies them (--route-noexec, --dns-updown disable).
     # Whatever awk does not see, OpenVPN may still run, so awk must split words and find block ends exactly
     # as OpenVPN does. Rather than copy OpenVPN's quoting rules, profiles where the two could differ are refused.
-    # ponytail: a profile that quotes an argument (verify-x509-name "C=US, O=x") or has a comment with an
-    # apostrophe is refused. Upgrade path: a tokeniser that implements OpenVPN's parse_line quoting rules.
+    # ponytail: a profile that quotes an argument (verify-x509-name "C=US, O=x") is refused.
+    # Upgrade path: a tokeniser that implements OpenVPN's parse_line quoting rules.
     [ -r "$2" ] || { echo "Cannot read the profile '$2'." >&2; exit 1; }
     bad=$(export LC_ALL=C; tr '\000' '\001' < "$2" | awk '  # bytes, not characters; a NUL byte would cut a line short for awk, so it becomes \001
         function name(s) { return s ~ /^--./ ? substr(s, 3) : s }  # OpenVPN drops a leading -- from a directive
@@ -23,10 +23,15 @@ check)
         length($0) > 249 { refuse("a line longer than 249 characters") }  # OpenVPN reads 255 bytes at a time: the rest of a longer line becomes a new "line"
         /[\001-\010\013-\037\177]/ { refuse("a control character") }  # OpenVPN splits words on \v, \f and \r too; awk does not
         skip { if ($0 ~ ("^[ \t]*</" skip ">")) skip = ""; next }  # inside an inline block, which ends at a line that starts with the closing tag
+        { sub(/(^|[ \t])[#;].*$/, "") }  # a word that starts with # or ; begins a comment; what the comment says does not matter
         /["\047\\]/ { refuse("quotes or backslashes") }  # no quoting rules to copy: with none, a word is text between blanks
-        { sub(/(^|[ \t])[#;].*$/, ""); w = name($1); a = 2 }  # a word that starts with # or ; begins a comment
-        NF == 0 || (NF == 1 && $1 ~ /^<\/?connection>$/) { next }
-        NF == 1 && $1 ~ /^<(ca|cert|key|extra-certs|tls-auth|tls-crypt|tls-crypt-v2)>$/ { skip = substr($1, 2, length($1) - 2); next }  # only a line that is just the tag opens a block
+        { w = name($1); a = 2 }
+        NF == 0 { next }
+        NF == 1 && $1 ~ /^<\/?connection>$/ { conn = ($1 == "<connection>"); next }
+        NF == 1 && $1 ~ /^<(ca|cert|key|extra-certs|tls-auth|tls-crypt|tls-crypt-v2)>$/ {  # only a line that is just the tag opens a block
+            if (conn) refuse($1 " inside <connection>")  # OpenVPN ends the connection block first, so the two would disagree on where this one ends
+            skip = substr($1, 2, length($1) - 2); next
+        }
         w == "setenv" && name($2) == "opt" { w = name($3); a = 4; if (w == "") refuse("setenv opt") }  # "setenv opt X" applies X
         w == "setenv" && name($2) !~ /^(CLIENT_CERT|FORWARD_COMPATIBLE|PUSH_PEER_INFO|GENERIC_CONFIG|ALLOW_PASSWORD_SAVE|[UI]V_[A-Za-z0-9_]+)$/ { refuse("setenv " $2) }
         w ~ /^(http|socks)-proxy$/ && $(a + 2) != "" && $(a + 2) !~ /^auto(-nct)?$/ { refuse(w " with a credentials file") }
