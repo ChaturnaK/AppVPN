@@ -1,0 +1,120 @@
+# AppVPN
+
+A per-app OpenVPN client for macOS. It connects with a normal `.ovpn` profile, but only the apps you launch from AppVPN use the tunnel. Everything else on the Mac keeps its normal connection, routes and DNS.
+
+![AppVPN window](docs/screenshot.png)
+
+> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests. A full connection through a real tunnel (which needs the admin password) has not been verified yet. See [Verifying a real connection](#verifying-a-real-connection).
+
+## Requirements
+
+- macOS 26 or later (the UI uses Liquid Glass)
+- Xcode command-line tools (Swift 5.9+)
+- OpenVPN 2.7+ from Homebrew: `brew install openvpn` (2.7 is needed for `--dns-updown disable`)
+
+## Build and run
+
+```bash
+./build.sh
+open build/AppVPN.app
+```
+
+`build.sh` compiles with SwiftPM and assembles an ad-hoc signed `build/AppVPN.app`. No Apple developer account or entitlements are needed.
+
+## Using it
+
+1. **Import a profile.** Click **Import Profile…**, drop an `.ovpn` file on the window, or use **From URL…** with a direct https link. Several profiles can be kept; the pill next to Connect switches, renames and deletes them.
+2. **Connect.** macOS asks for an administrator password each time, because OpenVPN needs root to create the tunnel interface.
+3. **Add apps** with **+** and start them with **Launch**. Only apps launched this way use the tunnel.
+4. For terminal commands, click **Copy shell proxy settings** and paste the `export …` line into the shell.
+
+If the VPN drops, OpenVPN reconnects by itself without another password prompt. While the tunnel is down, traffic from VPN apps is blocked; it never falls back to the normal connection.
+
+### What "coverage" means
+
+Per-app routing here works through a local proxy, so it depends on the app honouring proxy settings.
+
+| Label in the app | Apps | What goes through the VPN |
+|---|---|---|
+| All traffic and DNS | Chromium browsers (Chrome, Edge, Brave…) | Everything, in a separate VPN-only browser profile |
+| Web traffic only | Electron apps (VS Code, Postman, Slack…) | Chromium traffic; background Node traffic only if the app honours proxy variables |
+| May bypass the VPN | Everything else | Only what the app sends through `HTTP(S)_PROXY` / `ALL_PROXY` |
+
+Apps with their own SOCKS5 setting can be pointed at `127.0.0.1:18964` by hand.
+
+## How it works
+
+```
+ selected app ──► 127.0.0.1:18964 (SOCKS5 / HTTP proxy in AppVPN)
+                        │  every outbound socket is pinned to the
+                        │  tunnel interface with IP_BOUND_IF
+                        ▼
+                     utunN ──► OpenVPN (root) ──► VPN server
+
+ everything else ──► default route (unchanged)
+```
+
+- **Tunnel.** `vpn.sh start` runs OpenVPN as a root daemon with `--route-nopull --route-noexec --dns-updown disable`, so neither pushed nor profile-defined routes and DNS are applied. The `--up` hook adds one default route *scoped* to the tunnel interface; only sockets bound to that interface can use it.
+- **Proxy.** `Sources/Proxy.swift` listens on loopback and speaks SOCKS5 and HTTP (`CONNECT` and plain). It resolves names itself over the tunnel, using the DNS server the VPN pushed, so lookups don't leak to the local resolver.
+- **Fail closed.** The proxy is pinned only while OpenVPN reports `CONNECTED`. In any other state, or if AppVPN is not running, proxy connections fail.
+- **Control.** `Sources/VPN.swift` talks to OpenVPN over its management socket (`~/.appvpn/mgmt.sock`): state changes, disconnect, and a forced reconnect after wake from sleep.
+- **Launching.** Apps are started with proxy environment variables; Chromium and Electron apps also get `--proxy-server`, `--host-resolver-rules` (no local DNS) and a WebRTC policy that forbids UDP around the proxy.
+
+### Files
+
+| Path | Purpose |
+|---|---|
+| `Sources/App.swift` | Window, UI, app launching |
+| `Sources/Profiles.swift` | Profile store, import validation, profile menu, its self-test |
+| `Sources/VPN.swift` | OpenVPN lifecycle over the management socket |
+| `Sources/Proxy.swift` | SOCKS5/HTTP proxy pinned to the tunnel, DNS over the tunnel, its self-test |
+| `vpn.sh` | Root-side launcher: `check` (profile allowlist), `start`, `up` (scoped route) |
+| `build.sh` | Builds and bundles the app |
+| `make-icon.swift`, `AppIcon.icns` | Icon generator and its output |
+| `test-profiles.sh`, `test-killswitch.py` | Tests, see below |
+
+Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `profiles/` (VPN-only browser profiles), `openvpn.log`, `mgmt.sock`. Preferences are in the `local.appvpn` defaults domain.
+
+## Security model
+
+- **Profiles are untrusted and OpenVPN runs as root**, so `vpn.sh check` is an allowlist: only ordinary client directives pass. Anything that runs code, loads a library, reads or writes other files, or is unknown is refused, with the directive named in the error. The same check runs at import and again at connect.
+- Imports must be UTF-8, at most 1 MB, contain a `remote` line and not be an HTML page. Certificate and key files referenced by a profile are inlined only if they sit in the profile's own folder. URL imports must be https.
+- Profiles needing a username and password (`auth-user-pass`) are not supported and are refused at import.
+- The management socket is restricted to the user who started the connection.
+- Known gap, marked `ponytail:` in `vpn.sh`: the root launcher runs from a user-writable app bundle and prompts for the password on every connect. The upgrade path is a root-owned LaunchDaemon.
+
+## Limits
+
+- Not a system-wide VPN and not a kernel-level per-app VPN. Apps that ignore proxy settings (Safari, most native apps, games) are not routed. Doing that properly needs a Network Extension, which requires the paid Apple Developer Program.
+- IPv4 only through the tunnel; IPv6 targets are refused rather than sent direct.
+- A network switch without sleep is noticed by OpenVPN's ping timeout (60 s by default, or whatever the server pushes), not instantly.
+- No menu-bar item, launch at login, traffic statistics or auto-update.
+- Source comments starting with `ponytail:` mark deliberate shortcuts and their upgrade path.
+
+## Tests
+
+None of these need root or a real VPN server.
+
+```bash
+./build.sh
+./test-profiles.sh                                          # profile store and import rules (21 checks)
+build/AppVPN.app/Contents/MacOS/AppVPN --selftest en0       # proxy paths, pinned to en0 (7 checks; quit the app first)
+python3 test-killswitch.py                                  # reconnect and blocking, incl. headless Chrome (11 checks)
+```
+
+`test-killswitch.py` plays the part of OpenVPN's management interface, quits and relaunches the app, and refuses to run while a real tunnel is up.
+
+## Verifying a real connection
+
+1. Connect with a working profile.
+2. Routing is untouched: `netstat -rn -f inet` still shows the normal default route, plus a `default` row on `utunN` with the `I` (scoped) flag.
+3. The proxy exits through the VPN, the system does not:
+
+   ```bash
+   curl -s -x socks5h://127.0.0.1:18964 ifconfig.me   # VPN address
+   curl -s ifconfig.me                                 # your own address
+   ```
+
+4. Sleep and wake the Mac: no password prompt, the first command fails while the app shows "Reconnecting…", then works again.
+
+Troubleshooting starts with `~/.appvpn/openvpn.log`.
