@@ -107,9 +107,11 @@ check "the pushed redirect-gateway is not applied" no_redirect
 check "system DNS is unchanged" test "$(dns)" = "$before_dns"
 check "the rest of the Mac still reaches the internet directly" curl -s -m 20 -o /dev/null https://example.com
 
-check "traffic through the proxy enters the tunnel" enters_tunnel
+# Direct first: after the proxied attempt the proxy keeps retrying its connection into the tunnel
+# for a few seconds, which would show up in the counter.
 c=$(out_packets); curl -s -m 4 -o /dev/null "http://$unroutable/" || true; d=$(out_packets)
 check "direct traffic stays off the tunnel" test "$d" = "$c"
+check "traffic through the proxy enters the tunnel" enters_tunnel
 
 # Both ends of this tunnel are on one host, so the kernel may short-circuit a full round trip.
 python3 -m http.server 8099 --bind 10.99.0.1 >/dev/null 2>&1 &
