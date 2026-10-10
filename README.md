@@ -11,7 +11,7 @@ Most of this page describes the macOS app. The Windows app does the same job in 
 ## Requirements
 
 - macOS 26 or later on Apple silicon (the UI uses Liquid Glass), or
-- Windows 10 or 11, x64 or ARM (see [Windows](#windows))
+- Windows 11, x64 or ARM (see [Windows](#windows)). Windows 10 on x64 should work but has not been tested.
 
 Released builds need nothing else: OpenVPN is bundled inside the app.
 
@@ -129,7 +129,7 @@ The Windows app lives in `windows/` (C#, WPF, no packages beyond .NET). It has t
 
 The setup program installs AppVPN and, if the PC has no OpenVPN 2.7 or later, OpenVPN Community with it. OpenVPN cannot live inside the app as it does on macOS: the tunnel needs OpenVPN's signed driver, which only OpenVPN's own installer sets up. An older OpenVPN is upgraded, a newer one is left alone, and removing AppVPN leaves OpenVPN installed.
 
-To build from source you need the .NET 10 SDK, and Inno Setup 6 for the setup program:
+To build from source you need the .NET 10 SDK, and Inno Setup for the setup program:
 
 ```powershell
 windows\build.ps1            # out\app\AppVPN.exe

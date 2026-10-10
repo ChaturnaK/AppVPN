@@ -88,4 +88,4 @@ jobs:
           gh release create "v$VERSION" "AppVPN-$VERSION.dmg" "AppVPN-$VERSION-setup.exe" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
             --notes "**macOS** (26 or later, Apple silicon): open the disk image and drag AppVPN to Applications; OpenVPN is included. The app is not notarized: run \`xattr -dr com.apple.quarantine /Applications/AppVPN.app\` once before the first launch.
 
-          **Windows** (10 or 11, x64 or ARM): run the setup program. It also installs OpenVPN if the PC has none. It is not code-signed, so Windows SmartScreen asks before running it (More info, Run anyway)."
+          **Windows** (11, x64 or ARM): run the setup program. It also installs OpenVPN if the PC has none. It is not code-signed, so Windows SmartScreen asks before running it (More info, Run anyway)."

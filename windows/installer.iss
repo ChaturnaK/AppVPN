@@ -27,15 +27,13 @@ CloseApplications=yes
 
 [Files]
 Source: "out\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
-Source: "out\OpenVPN-amd64.msi"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsOpenVpn and not IsArm64
-Source: "out\OpenVPN-arm64.msi"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsOpenVpn and IsArm64
+Source: "out\OpenVPN-amd64.msi"; Flags: dontcopy
+Source: "out\OpenVPN-arm64.msi"; Flags: dontcopy
 
 [Icons]
 Name: "{autoprograms}\AppVPN"; Filename: "{app}\AppVPN.exe"
 
 [Run]
-Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\OpenVPN-amd64.msi"" /qn /norestart{code:OpenVpnFeatures}"; StatusMsg: "Installing OpenVPN..."; Check: NeedsOpenVpn and not IsArm64
-Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\OpenVPN-arm64.msi"" /qn /norestart{code:OpenVpnFeatures}"; StatusMsg: "Installing OpenVPN..."; Check: NeedsOpenVpn and IsArm64
 Filename: "{app}\AppVPN.exe"; Description: "Start AppVPN"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [Code]
@@ -58,9 +56,27 @@ begin
 end;
 
 { A fresh install gets only what AppVPN needs. An older OpenVPN is upgraded as it is: naming features would remove the user's others, such as OpenVPN GUI. }
-function OpenVpnFeatures(Param: String): String;
+function OpenVpnFeatures: String;
 var
   Major, Minor: Cardinal;
 begin
   if InstalledOpenVpn(Major, Minor) then Result := '' else Result := ' {#Features}';
+end;
+
+{ OpenVPN first: without it AppVPN cannot connect, so if its installer fails, setup stops here and says so. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Msi: String;
+  Code: Integer;
+begin
+  Result := '';
+  if not NeedsOpenVpn then Exit;
+  if IsArm64 then Msi := 'OpenVPN-arm64.msi' else Msi := 'OpenVPN-amd64.msi';
+  ExtractTemporaryFile(Msi);
+  if not Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + ExpandConstant('{tmp}\' + Msi) + '" /qn /norestart' + OpenVpnFeatures, '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Code := -1;
+  if Code = 3010 then
+    NeedsRestart := True
+  else if Code <> 0 then
+    Result := 'OpenVPN could not be installed (its installer returned code ' + IntToStr(Code) + '), so AppVPN was not installed either. Close other installers and run this setup again, or install OpenVPN 2.7 from openvpn.net first.';
 end;

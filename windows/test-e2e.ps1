@@ -26,7 +26,7 @@ $server = $null
 function Check($name, [scriptblock]$test) { if (& $test) { Write-Host "ok   $name" } else { Write-Host "FAIL $name"; $script:fail = $true } }
 function Wait-For($seconds, [scriptblock]$test) { for (; $seconds -gt 0; $seconds--) { if (& $test) { return $true }; Start-Sleep 1 }; $false }
 function Quit-App { Get-Process AppVPN -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1 }
-function Client { Get-CimInstance Win32_Process -Filter "Name='openvpn.exe'" | Where-Object CommandLine -Match 'client\.ovpn' }
+function Client { Get-CimInstance Win32_Process -Filter "Name='openvpn.exe'" | Where-Object CommandLine -Match 'client 2\.ovpn' }
 function Up-Count { if (Test-Path $log) { @(Select-String 'Initialization Sequence Completed' $log).Count } else { 0 } }
 function Start-Server { $script:server = Start-Process $ovpn -ArgumentList "--config $tf/server.conf --log $tf/server.log" -WindowStyle Hidden -PassThru }
 function Default-Route { Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1 | ForEach-Object { "$($_.NextHop) on $($_.ifIndex)" } }
@@ -72,14 +72,17 @@ dh none
 keepalive 2 6
 push "redirect-gateway def1"
 push "dhcp-option DNS 10.99.0.1"
+push "dns server 0 address 10.99.0.1"
+push "dns search-domains corp.test"
 push "block-outside-dns"
 push "register-dns"
 push "ip-win32 netsh"
 push "route-method exe"
 verb 3
 "@)
+    # The profile's name has a space in it, as stored profiles often do ("Work VPN", "office 2").
     $pem = { param($f) ([IO.File]::ReadAllText("$t\$f") -replace "`r", '').Trim() }
-    [IO.File]::WriteAllText("$t\client.ovpn", "client`ndev tun`nproto udp`nremote 127.0.0.1 11940`nnobind`nremote-cert-tls server`n<ca>`n$(& $pem ca.crt)`n</ca>`n<cert>`n$(& $pem client.crt)`n</cert>`n<key>`n$(& $pem client.key)`n</key>`n")
+    [IO.File]::WriteAllText("$t\client 2.ovpn", "client`ndev tun`nproto udp`nremote 127.0.0.1 11940`nnobind`nremote-cert-tls server`n<ca>`n$(& $pem ca.crt)`n</ca>`n<cert>`n$(& $pem client.crt)`n</cert>`n<key>`n$(& $pem client.key)`n</key>`n")
 
     Quit-App
     $beforeRoute = Default-Route
@@ -87,7 +90,7 @@ verb 3
 
     Start-Server
     Check 'test server starts' { Wait-For 30 { (Test-Path "$t\server.log") -and (Select-String -Quiet 'Initialization Sequence Completed' "$t\server.log") } }
-    $start = Start-Process $app -ArgumentList '--start', "$t\client.ovpn" -PassThru -NoNewWindow -RedirectStandardOutput "$t\start.txt"
+    $start = Start-Process $app -ArgumentList '--start', "`"$t\client 2.ovpn`"" -PassThru -NoNewWindow -RedirectStandardOutput "$t\start.txt"
     $null = $start.Handle  # without this PowerShell forgets the exit code
     $start.WaitForExit()  # not -Wait: that would also wait for the OpenVPN it leaves running
     Check 'the launcher starts OpenVPN, held until the app attaches' { $start.ExitCode -eq 0 -and (Wait-For 10 { Get-NetTCPConnection -LocalPort $mgmt -State Listen -ErrorAction SilentlyContinue }) -and (Up-Count) -eq 0 }
@@ -144,7 +147,7 @@ verb 3
         Write-Host '--- routes'; Get-NetRoute -AddressFamily IPv4 | Where-Object DestinationPrefix -Match '/[01]$' | Format-Table DestinationPrefix, NextHop, InterfaceAlias, RouteMetric | Out-String
     }
     Quit-App
-    Get-CimInstance Win32_Process -Filter "Name='openvpn.exe'" | Where-Object CommandLine -Match 'appvpn-e2e|client\.ovpn' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name='openvpn.exe'" | Where-Object CommandLine -Match 'appvpn-e2e' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep 1
     Remove-Item -Recurse -Force $t -ErrorAction SilentlyContinue
 }
