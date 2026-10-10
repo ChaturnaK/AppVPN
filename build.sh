@@ -1,5 +1,6 @@
 #!/bin/sh
 # Builds build/AppVPN.app (ad-hoc signed; no entitlements needed). VERSION=1.2.3 sets the bundle version.
+# "./build.sh dmg" also packages build/AppVPN-<version>.dmg for installation.
 set -eu
 cd "$(dirname "$0")"
 
@@ -30,3 +31,14 @@ cat > "$app/Contents/Info.plist" <<EOF
 EOF
 codesign --force --sign - "$app"
 echo "Built $app"
+
+if [ "${1:-}" = dmg ]; then
+    # The usual installer layout: the app next to a shortcut to Applications.
+    stage=$(mktemp -d)
+    cp -R "$app" "$stage/"
+    ln -s /Applications "$stage/Applications"
+    dmg=build/AppVPN-${VERSION:-0.1}.dmg
+    hdiutil create -quiet -ov -volname AppVPN -srcfolder "$stage" -format UDZO "$dmg"
+    rm -rf "$stage"
+    echo "Built $dmg"
+fi

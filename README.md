@@ -4,7 +4,7 @@ A per-app OpenVPN client for macOS. It connects with a normal `.ovpn` profile, b
 
 ![AppVPN window](docs/screenshot.png)
 
-> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests. The end-to-end test with a real tunnel needs passwordless sudo and is meant for CI; it has not had a passing run yet. See [Tests](#tests) and [Verifying a real connection](#verifying-a-real-connection).
+> **Status:** the proxy, profile handling, reconnect logic and blocking are covered by tests, and CI runs an end-to-end test with a real tunnel on every push. See [Tests](#tests) and [Verifying a real connection](#verifying-a-real-connection).
 
 ## Requirements
 
@@ -112,12 +112,12 @@ Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `pro
 
 ## Releases
 
-Every push of code to `main` runs `./test.sh` on GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)); if all checks pass, the build is published as release `v0.1.<run number>` with `AppVPN-<version>.zip` attached. Pull requests run the same tests without publishing. Changes to documentation only do not trigger a release.
+Every push of code to `main` runs `./test.sh` on GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)); if all checks pass, the build is published as release `v0.1.<run number>` with `AppVPN-<version>.dmg` attached (`./build.sh dmg` makes the same disk image locally). Pull requests run the same tests without publishing. Changes to documentation only do not trigger a release.
 
-The app is ad-hoc signed and not notarized, so a downloaded copy has to be released from quarantine once:
+To install, open the disk image and drag AppVPN to Applications. The app is ad-hoc signed and not notarized, so a downloaded copy has to be released from quarantine once before the first launch:
 
 ```bash
-xattr -dr com.apple.quarantine AppVPN.app
+xattr -dr com.apple.quarantine /Applications/AppVPN.app
 ```
 
 ## Verifying a real connection
