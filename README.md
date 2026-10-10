@@ -114,6 +114,10 @@ Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `pro
 
 `test-e2e.sh` starts a throwaway OpenVPN server and client on the same machine. Because OpenVPN needs root, it runs on CI and is skipped locally unless `sudo` works without a password.
 
+## AI usage disclosure
+
+AppVPN was built with [Claude Code](https://claude.com/claude-code), Anthropic's AI coding assistant. It was used to write and modify much of the source, the tests and this documentation. The maintainer directs the work and reviews the changes, and the behaviour is checked by the test suite above rather than by trust in the tooling. Because the app runs a launcher as root, read `vpn.sh` and `Sources/` yourself before trusting it with a profile that matters.
+
 ## Releases
 
 Every push of code to `main` runs `./test.sh` on GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)); if all checks pass, the build is published as release `v0.1.<run number>` with `AppVPN-<version>.dmg` attached (`./build.sh dmg` makes the same disk image locally). Pull requests run the same tests without publishing. Changes to documentation only do not trigger a release.
