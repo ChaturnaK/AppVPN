@@ -55,7 +55,21 @@ refused "unknown directive" 'frobnicate 1\n' "'frobnicate'"
 # OpenVPN validates options before it needs root, so "start" with a dummy profile shows whether the
 # options vpn.sh adds are accepted next to what a profile may already set. It always stops at the
 # missing CA; what must not appear is a conflict or an unrecognised option.
-if [ -x /opt/homebrew/sbin/openvpn ] || [ -x /usr/local/sbin/openvpn ]; then
+bundled=${vpn%/Resources/vpn.sh}/Helpers/openvpn
+if [ -x "$bundled" ]; then
+    # Both what the files say they load and what the loader really loads: nothing from Homebrew.
+    refs=$(otool -L "$bundled" "${vpn%/Resources/vpn.sh}"/Frameworks/*.dylib | grep -cE '^[[:space:]]+/(opt|usr/local)/' || true)
+    loaded=$(DYLD_PRINT_LIBRARIES=1 "$bundled" --version 2>&1 | grep -cE '/(opt|usr/local)/' || true)
+    if [ "$refs" = 0 ] && [ "$loaded" = 0 ] && "$bundled" --version | grep -q '^OpenVPN 2'; then
+        echo "ok   bundled OpenVPN runs using only libraries inside the app"
+    else
+        echo "FAIL bundled OpenVPN runs using only libraries inside the app ($refs references, $loaded loaded from outside)"; fail=1
+    fi
+else
+    echo "skip bundled OpenVPN check (the app was built without it)"
+fi
+
+if [ -x "$bundled" ] || [ -x /opt/homebrew/sbin/openvpn ] || [ -x /usr/local/sbin/openvpn ]; then
     for extra in '' 'keepalive 10 60\n' '--keepalive 10 60\n' 'ping 5\n' 'cipher AES-256-CBC\n'; do
         printf %b "$base$extra" > "$t/p.ovpn"
         : > "$t/openvpn.log"  # with --daemon, OpenVPN reports option errors here rather than on stderr

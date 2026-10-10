@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OpenVPN
+      - name: Install OpenVPN (bundled into the app by build.sh)
         run: brew install openvpn
 
       - name: Build and test
@@ -34,6 +34,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ditto -c -k --keepParent build/AppVPN.app "AppVPN-$VERSION.zip"
-          gh release create "v$VERSION" "AppVPN-$VERSION.zip" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
-            --notes "Requires macOS 26 or later and OpenVPN 2.7+ (\`brew install openvpn\`). The app is not notarized: after unzipping, run \`xattr -dr com.apple.quarantine AppVPN.app\` once, then open it."
+          ./build.sh dmg
+          gh release create "v$VERSION" "build/AppVPN-$VERSION.dmg" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
+            --notes "Open the disk image and drag AppVPN to Applications. Requires macOS 26 or later on Apple silicon; OpenVPN is included. The app is not notarized: run \`xattr -dr com.apple.quarantine /Applications/AppVPN.app\` once before the first launch."
