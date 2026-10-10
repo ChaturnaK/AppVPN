@@ -8,9 +8,11 @@ A per-app OpenVPN client for macOS. It connects with a normal `.ovpn` profile, b
 
 ## Requirements
 
-- macOS 26 or later (the UI uses Liquid Glass)
-- Xcode command-line tools (Swift 5.9+)
-- OpenVPN 2.7+ from Homebrew: `brew install openvpn` (2.7 is needed for `--dns-updown disable`)
+- macOS 26 or later on Apple silicon (the UI uses Liquid Glass)
+
+Released builds need nothing else: OpenVPN is bundled inside the app.
+
+To build from source you also need the Xcode command-line tools (Swift 5.9+) and OpenVPN 2.7+ from Homebrew (`brew install openvpn`), which the build copies into the app.
 
 ## Build and run
 
@@ -20,6 +22,8 @@ open build/AppVPN.app
 ```
 
 `build.sh` compiles with SwiftPM and assembles an ad-hoc signed `build/AppVPN.app`. No Apple developer account or entitlements are needed.
+
+The build copies Homebrew's `openvpn` and the libraries it needs into the app (`Contents/Helpers`, `Contents/Frameworks`) and relinks them to load from there, so the finished app runs on a Mac without Homebrew. Their licence texts go into `Contents/Resources/licenses`. OpenVPN itself is GPL-2.0; its source is at <https://github.com/OpenVPN/openvpn>. Each build carries whatever OpenVPN version Homebrew had at build time, so OpenVPN security updates reach users only through a new AppVPN build.
 
 ## Using it
 
@@ -54,7 +58,7 @@ Apps with their own SOCKS5 setting can be pointed at `127.0.0.1:18964` by hand.
  everything else ──► default route (unchanged)
 ```
 
-- **Tunnel.** `vpn.sh start` runs OpenVPN as a root daemon with `--route-nopull --route-noexec --dns-updown disable`, so neither pushed nor profile-defined routes and DNS are applied. The `--up` hook adds one default route *scoped* to the tunnel interface; only sockets bound to that interface can use it.
+- **Tunnel.** `vpn.sh start` runs the bundled OpenVPN as a root daemon with `--route-nopull --route-noexec --dns-updown disable`, so neither pushed nor profile-defined routes and DNS are applied. The `--up` hook adds one default route *scoped* to the tunnel interface; only sockets bound to that interface can use it.
 - **Proxy.** `Sources/Proxy.swift` listens on loopback and speaks SOCKS5 and HTTP (`CONNECT` and plain). It resolves names itself over the tunnel, using the DNS server the VPN pushed, so lookups don't leak to the local resolver.
 - **Fail closed.** The proxy is pinned only while OpenVPN reports `CONNECTED`. In any other state, or if AppVPN is not running, proxy connections fail.
 - **Control.** `Sources/VPN.swift` talks to OpenVPN over its management socket (`~/.appvpn/mgmt.sock`): state changes, disconnect, and a forced reconnect after wake from sleep.
@@ -69,7 +73,7 @@ Apps with their own SOCKS5 setting can be pointed at `127.0.0.1:18964` by hand.
 | `Sources/VPN.swift` | OpenVPN lifecycle over the management socket |
 | `Sources/Proxy.swift` | SOCKS5/HTTP proxy pinned to the tunnel, DNS over the tunnel, its self-test |
 | `vpn.sh` | Root-side launcher: `check` (profile allowlist), `start`, `up` (scoped route) |
-| `build.sh` | Builds and bundles the app |
+| `build.sh` | Builds the app, bundles OpenVPN into it, optionally packages a disk image |
 | `make-icon.swift`, `AppIcon.icns` | Icon generator and its output |
 | `test.sh`, `test-*.sh`, `test-killswitch.py` | Tests, see below |
 | `.github/workflows/release.yml` | Test and publish a release on every push to `main` |
@@ -82,7 +86,7 @@ Runtime data lives in `~/.appvpn/`: `ovpn/` (imported profiles, mode 0600), `pro
 - Imports must be UTF-8, at most 1 MB, contain a `remote` line and not be an HTML page. Certificate and key files referenced by a profile are inlined only if they sit in the profile's own folder. URL imports must be https.
 - Profiles needing a username and password (`auth-user-pass`) are not supported and are refused at import.
 - The management socket is restricted to the user who started the connection.
-- Known gap, marked `ponytail:` in `vpn.sh`: the root launcher runs from a user-writable app bundle and prompts for the password on every connect. The upgrade path is a root-owned LaunchDaemon.
+- Known gap, marked `ponytail:` in `vpn.sh`: the root launcher and the bundled OpenVPN run from a user-writable app bundle and prompts for the password on every connect. The upgrade path is a root-owned LaunchDaemon.
 
 ## Limits
 

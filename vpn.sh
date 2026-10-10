@@ -27,8 +27,9 @@ check)
     ;;
 start)
     profile=$2 dir=$3 user=$4
-    for ovpn in /opt/homebrew/sbin/openvpn /usr/local/sbin/openvpn; do [ -x "$ovpn" ] && break; done
-    [ -x "$ovpn" ] || { echo "openvpn not found (brew install openvpn)" >&2; exit 1; }
+    # The copy bundled in the app first; an installed one only if the app was built without it.
+    for ovpn in "$(dirname "$0")/../Helpers/openvpn" /opt/homebrew/sbin/openvpn /usr/local/sbin/openvpn; do [ -x "$ovpn" ] && break; done
+    [ -x "$ovpn" ] || { echo "OpenVPN is missing from this build of AppVPN and is not installed (brew install openvpn)." >&2; exit 1; }
     "$0" check "$profile"
     # Old servers without cipher negotiation need the profile's cipher as fallback on OpenVPN 2.6+.
     cipher=$(awk '{ sub(/^--/, "", $1) } $1 == "cipher" { print $2; exit }' "$profile")

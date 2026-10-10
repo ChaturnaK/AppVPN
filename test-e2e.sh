@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 
 app=$PWD/build/AppVPN.app
 vpn=$app/Contents/Resources/vpn.sh
-for ovpn in /opt/homebrew/sbin/openvpn /usr/local/sbin/openvpn; do [ -x "$ovpn" ] && break; done
+for ovpn in "$app/Contents/Helpers/openvpn" /opt/homebrew/sbin/openvpn /usr/local/sbin/openvpn; do [ -x "$ovpn" ] && break; done
 dir=$HOME/.appvpn
 log=$dir/openvpn.log
 proxy=127.0.0.1:18964
