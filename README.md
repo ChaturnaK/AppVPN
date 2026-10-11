@@ -34,7 +34,7 @@ Download the latest build from [Releases](https://github.com/ChaturnaK/AppVPN/re
 | | macOS | Windows |
 |---|---|---|
 | Needs | macOS 26 or later on Apple silicon (the UI uses Liquid Glass) | Windows 11, x64 or ARM. Windows 10 on x64 should work but has not been tested |
-| File | `AppVPN-<version>.dmg` | `AppVPN-<version>-setup.exe` |
+| File | `AppVPN-<version>.dmg` | `AppVPN-<version>-x64-setup.exe` for most PCs, `AppVPN-<version>-arm64-setup.exe` for ARM PCs |
 | OpenVPN | Inside the app | Installed by the setup program if the PC has none |
 
 **macOS.** Open the disk image and drag AppVPN to Applications. The app is ad-hoc signed and not notarized, so a downloaded copy has to be released from quarantine once before the first launch:
@@ -43,7 +43,7 @@ Download the latest build from [Releases](https://github.com/ChaturnaK/AppVPN/re
 xattr -dr com.apple.quarantine /Applications/AppVPN.app
 ```
 
-**Windows.** Run the setup program. It is not code-signed, so SmartScreen asks first: choose **More info**, then **Run anyway**. It installs AppVPN and, if the PC has no OpenVPN 2.7 or later, OpenVPN Community with it. OpenVPN cannot live inside the app as it does on macOS: the tunnel needs OpenVPN's signed driver, which only OpenVPN's own installer sets up. An older OpenVPN is upgraded, a newer one is left alone, and removing AppVPN leaves OpenVPN installed. If OpenVPN's installer fails, setup stops and says so instead of installing an app that cannot connect.
+**Windows.** Run the setup program for your PC: `x64` for a PC with an Intel or AMD processor, `arm64` for one with an ARM processor such as a Snapdragon (Settings > System > About, "System type", says which). The x64 one also works on an ARM PC, where Windows emulates the app. It is not code-signed, so SmartScreen asks first: choose **More info**, then **Run anyway**. It installs AppVPN and, if the PC has no OpenVPN 2.7 or later, OpenVPN Community with it. OpenVPN cannot live inside the app as it does on macOS: the tunnel needs OpenVPN's signed driver, which only OpenVPN's own installer sets up. An older OpenVPN is upgraded, a newer one is left alone, and removing AppVPN leaves OpenVPN installed. If OpenVPN's installer fails, setup stops and says so instead of installing an app that cannot connect.
 
 ## Using it
 
@@ -157,11 +157,11 @@ open build/AppVPN.app
 
 ```powershell
 windows\build.ps1            # out\app\AppVPN.exe
-windows\build.ps1 installer  # also out\AppVPN-<version>-setup.exe
+windows\build.ps1 installer  # also out\AppVPN-<version>-<x64 or arm64>-setup.exe
 windows\build.ps1 openvpn    # installs the OpenVPN the setup program carries (elevated), for the tests
 ```
 
-The setup program carries OpenVPN's own installers for x64 and ARM, downloaded from OpenVPN's server and checked against SHA-256 values in `build.ps1`. The Windows project also compiles on a Mac (`dotnet build windows`), which cannot run it.
+`build.ps1` builds for the kind of PC it runs on, x64 or ARM, so each setup program is built on its own kind. The setup program carries OpenVPN's own installer (the x64 one carries the ARM installer too, because it also runs on ARM PCs), downloaded from OpenVPN's server and checked against SHA-256 values in `build.ps1`. The Windows project also compiles on a Mac (`dotnet build windows`), which cannot run it.
 
 OpenVPN itself is GPL-2.0; its source is at <https://github.com/OpenVPN/openvpn>.
 
@@ -229,7 +229,7 @@ Troubleshooting starts with the OpenVPN log: `~/.appvpn/openvpn.log` on macOS, `
 
 ## Releases
 
-Every push of code to `main` runs `./test.sh` on macOS and `windows\test.ps1` on Windows on GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)); if all checks pass on both, the build is published as release `v0.1.<run number>` with `AppVPN-<version>.dmg` and `AppVPN-<version>-setup.exe` attached. Pull requests run the same tests without publishing. Changes to documentation only do not trigger a release.
+Every push of code to `main` runs `./test.sh` on macOS and `windows\test.ps1` on Windows, once on x64 and once on ARM, on GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)); if all checks pass on all three, the build is published as release `v0.1.<run number>` with `AppVPN-<version>.dmg` and the two Windows setup programs attached. Pull requests run the same tests without publishing. Changes to documentation only do not trigger a release.
 
 ## AI usage disclosure
 
