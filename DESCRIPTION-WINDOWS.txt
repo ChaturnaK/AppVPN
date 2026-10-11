@@ -1,0 +1,41 @@
+AppVPN for Windows
+
+This is the Windows version of AppVPN. It does the same job as the Mac app and
+looks the same: you start chosen apps from AppVPN, only those apps use the
+VPN, and they are cut off, not switched to the normal connection, if the VPN
+drops.
+
+Runs on: Windows 11, x64 or ARM. Windows 10 on x64 should work but has not
+been tested.
+
+Installing: there are two setup programs. Download and run the one for your
+PC:
+- AppVPN-<version>-x64-setup.exe for a PC with an Intel or AMD processor
+- AppVPN-<version>-arm64-setup.exe for a PC with an ARM processor, such as a
+  Snapdragon
+Settings > System > About, under "System type", says which kind of PC it is.
+The x64 one also works on an ARM PC, where Windows emulates the app. The arm64
+one is for ARM PCs only.
+
+Setup installs AppVPN and, if the PC does not already have it, OpenVPN, which
+AppVPN needs to make the connection. Windows will warn before running the
+setup program because it is not signed by a paid publisher certificate; choose
+"More info", then "Run anyway".
+
+What is different from the Mac app:
+- Each time you connect, Windows asks "Do you want to allow this app to make
+  changes?" and names OpenVPN. On a Mac it is a password prompt instead.
+- You add apps by picking programs (.exe files) or Start menu shortcuts.
+- Some VPN profile settings are harmless on a Mac but would change the whole
+  PC on Windows. AppVPN refuses or removes those when a profile is imported.
+- One weaker spot: if every real network connection disappears while the VPN
+  adapter is still switched on, Windows may send other programs' traffic
+  toward the VPN. The VPN has lost its link by then, so nothing gets through.
+
+For developers: the code is in the windows/ folder, written in C# with WPF and
+nothing beyond .NET. windows\test.ps1 runs all tests, including one with a
+real VPN tunnel, and GitHub Actions runs it on every push, once on an x64 PC
+and once on an ARM one. windows\build.ps1 builds for the kind of PC it runs
+on, so each setup program is built on its own kind.
+
+Full details are in README.md.
