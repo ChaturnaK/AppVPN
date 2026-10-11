@@ -1,10 +1,11 @@
-# Builds out\app (AppVPN and the .NET it needs; nothing to install to run it).
+# Builds out\app (AppVPN and the .NET it needs; nothing to install to run it) for the kind of PC this runs on, x64 or ARM.
 # VERSION=1.2.3 in the environment sets the version.
-# "build.ps1 installer" also packages out\AppVPN-<version>-setup.exe, which installs OpenVPN when it is missing.
+# "build.ps1 installer" also packages out\AppVPN-<version>-<x64 or arm64>-setup.exe, which installs OpenVPN when it is missing.
 # "build.ps1 openvpn" installs the same OpenVPN the installer carries on this PC (elevated), for the tests.
 param([string]$What = '')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 
 # The OpenVPN the setup program carries. Users get OpenVPN security updates only through a new AppVPN setup, or from OpenVPN's own installer.
 $openvpn = '2.7.8-I001'
@@ -23,21 +24,21 @@ function Get-OpenVpn($arch) {  # OpenVPN's own signed installer, from its own se
 }
 
 if ($What -eq 'openvpn') {
-    $msi = Get-OpenVpn $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' })
+    $msi = Get-OpenVpn $(if ($arch -eq 'arm64') { 'arm64' } else { 'amd64' })
     $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart $features,OpenSSL" -Wait -PassThru  # openssl makes the end-to-end test's certificates
     if ($p.ExitCode -ne 0) { throw "OpenVPN's installer failed with code $($p.ExitCode)." }
     return
 }
 
-dotnet publish -c Release -o out\app --nologo -v quiet
+dotnet publish -c Release -r win-$arch -o out\app --nologo -v quiet
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 Write-Host 'Built out\app'
 
 if ($What -eq 'installer') {
-    Get-OpenVpn amd64 | Out-Null
+    if ($arch -eq 'x64') { Get-OpenVpn amd64 | Out-Null }  # the x64 setup also runs on ARM PCs, so it carries both
     Get-OpenVpn arm64 | Out-Null
     $iscc = @((Get-Command iscc -ErrorAction SilentlyContinue).Source) + (Get-Item "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe", "$env:ProgramFiles\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue).FullName | Where-Object { $_ } | Select-Object -First 1
     if (-not $iscc) { throw 'Inno Setup is needed to build the setup program (https://jrsoftware.org/isinfo.php).' }
-    & $iscc /Qp "/DFeatures=$features" installer.iss
+    & $iscc /Qp "/DArch=$arch" "/DFeatures=$features" installer.iss
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed.' }
 }

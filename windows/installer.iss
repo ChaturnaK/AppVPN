@@ -1,5 +1,6 @@
 ; AppVPN's setup program: installs AppVPN for all users and, if this PC has no OpenVPN 2.7 or later, OpenVPN's
-; own installer with it (the tunnel driver can only come from there). Built by "build.ps1 installer".
+; own installer with it (the tunnel driver can only come from there). Built by "build.ps1 installer", once for
+; each kind of PC: Arch is x64 or arm64.
 #define Version GetEnv("VERSION")
 #if Version == ""
   #define Version "0.1"
@@ -13,11 +14,17 @@ AppPublisher=AppVPN
 DefaultDirName={autopf}\AppVPN
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
-; The program is x64 and also runs on ARM PCs; OpenVPN is installed in the PC's own architecture.
+; The x64 setup also runs on ARM PCs, where Windows emulates the program; the arm64 setup is for ARM PCs only.
+; OpenVPN is always installed in the PC's own architecture.
+#if Arch == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 OutputDir=out
-OutputBaseFilename=AppVPN-{#Version}-setup
+OutputBaseFilename=AppVPN-{#Version}-{#Arch}-setup
 SetupIconFile=AppIcon.ico
 UninstallDisplayIcon={app}\AppVPN.exe
 Compression=lzma2
@@ -27,8 +34,14 @@ CloseApplications=yes
 
 [Files]
 Source: "out\app\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+#if Arch == "x64"
 Source: "out\OpenVPN-amd64.msi"; Flags: dontcopy
+#endif
 Source: "out\OpenVPN-arm64.msi"; Flags: dontcopy
+
+[InstallDelete]
+; What an earlier setup left behind. The x64 and arm64 builds differ in a few files, and one kind must not load the other's.
+Type: files; Name: "{app}\*.dll"
 
 [Icons]
 Name: "{autoprograms}\AppVPN"; Filename: "{app}\AppVPN.exe"

@@ -1,7 +1,7 @@
 name: Release
 
-# Every push of code to main is tested on macOS and on Windows and, if everything passes on both, published as
-# a release. Pull requests run the same tests without publishing.
+# Every push of code to main is tested on macOS and on Windows (x64 and ARM) and, if everything passes on all
+# three, published as a release. Pull requests run the same tests without publishing.
 on:
   push:
     branches: [main]
@@ -41,8 +41,13 @@ jobs:
           path: build/AppVPN-${{ env.VERSION }}.dmg
           if-no-files-found: error
 
-  windows:
-    runs-on: windows-latest
+  windows:  # each kind of PC builds, tests and packages its own setup program
+    strategy:
+      matrix:
+        include:
+          - { arch: x64, os: windows-latest }
+          - { arch: arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
       run:
@@ -65,11 +70,10 @@ jobs:
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe")) { choco install innosetup -y --no-progress }
           windows\build.ps1 installer
 
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push'
+      - uses: actions/upload-artifact@v4  # on pull requests too, so a setup program can be tried before it is released
         with:
-          name: windows
-          path: windows/out/AppVPN-${{ env.VERSION }}-setup.exe
+          name: windows-${{ matrix.arch }}
+          path: windows/out/AppVPN-${{ env.VERSION }}-${{ matrix.arch }}-setup.exe
           if-no-files-found: error
 
   publish:
@@ -85,7 +89,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION" "AppVPN-$VERSION.dmg" "AppVPN-$VERSION-setup.exe" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
+          gh release create "v$VERSION" "AppVPN-$VERSION.dmg" "AppVPN-$VERSION-x64-setup.exe" "AppVPN-$VERSION-arm64-setup.exe" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "AppVPN $VERSION" --generate-notes \
             --notes "**macOS** (26 or later, Apple silicon): open the disk image and drag AppVPN to Applications; OpenVPN is included. The app is not notarized: run \`xattr -dr com.apple.quarantine /Applications/AppVPN.app\` once before the first launch.
 
-          **Windows** (11, x64 or ARM): run the setup program. It also installs OpenVPN if the PC has none. It is not code-signed, so Windows SmartScreen asks before running it (More info, Run anyway)."
+          **Windows** (11): run the x64 setup program, or the arm64 one on a PC with an ARM processor (the x64 one works there too, emulated). It also installs OpenVPN if the PC has none. It is not code-signed, so Windows SmartScreen asks before running it (More info, Run anyway)."
