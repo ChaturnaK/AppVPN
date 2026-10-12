@@ -60,7 +60,7 @@ Per-app routing here works through a local proxy, so it depends on the app honou
 
 | Label in the app | Apps | What goes through the VPN |
 |---|---|---|
-| All traffic and DNS | Chromium browsers (Chrome, Edge, Brave…) | Everything, in VPN-only browser profiles kept apart from your normal ones. Once the browser has been launched, **Launch** lists its profiles and **New Profile** adds one |
+| All traffic and DNS | Chromium browsers (Chrome, Edge, Brave…) | Everything, in VPN-only browser profiles kept apart from your normal ones. Once the browser has been launched, **Launch** lists its profiles and **New Profile** adds one. It also lists the browser's everyday profiles (Chrome, Edge, Brave, Vivaldi, Chromium), logins and all: opening one restarts the normal browser, and all of its windows use the VPN until it is quit |
 | Web traffic only | Electron apps (VS Code, Postman, Slack…) | Chromium traffic; background Node traffic only if the app honours proxy variables |
 | May bypass the VPN | Everything else | Only what the app sends through `HTTP(S)_PROXY` / `ALL_PROXY` |
 

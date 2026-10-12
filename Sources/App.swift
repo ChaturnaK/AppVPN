@@ -76,7 +76,7 @@ struct ContentView: View {
     @EnvironmentObject private var vpn: VPN
     @AppStorage("selectedProfile") private var selected = ""
     @AppStorage("apps") private var appsRaw = ""
-    @State private var relaunch: URL?
+    @State private var relaunch: (app: URL, everyday: String?)?  // everyday: the profile to open in the browser's own data folder
     @State private var profiles: [String] = []
     @State private var showURLSheet = false
     @State private var problem: (title: String, message: String)?
@@ -163,18 +163,26 @@ struct ContentView: View {
             Text(problem?.message ?? "")
         }
         .confirmationDialog(
-            "\(relaunch?.deletingPathExtension().lastPathComponent ?? "") is already running",
+            "\(relaunch?.app.deletingPathExtension().lastPathComponent ?? "") is already running",
             isPresented: Binding(get: { relaunch != nil }, set: { if !$0 { relaunch = nil } }), presenting: relaunch
-        ) { app in
+        ) { item in
             Button("Quit and Relaunch via VPN") {
                 Task {
-                    running(app).forEach { $0.terminate() }
-                    for _ in 0..<50 where !running(app).isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
-                    launch(app)
+                    let app = item.app, everydayDir = item.everyday.flatMap { _ in everydayDir(app) }
+                    let old = everydayDir.map { [holder(of: $0, app: app)].compactMap { $0 } } ?? running(app)
+                    old.forEach { $0.terminate() }
+                    for _ in 0..<50 where !old.allSatisfy(\.isTerminated) { try? await Task.sleep(for: .milliseconds(100)) }
+                    // Launching next to an instance that is still up would open a window in it, outside the VPN.
+                    guard old.allSatisfy(\.isTerminated) else {
+                        problem = ("Couldn't Quit \(app.deletingPathExtension().lastPathComponent)", "Quit it yourself, then launch it from here again.")
+                        return
+                    }
+                    launch(app, profile: item.everyday, in: everydayDir)
                 }
             }
-        } message: { _ in
-            Text("It has to be restarted to pick up the VPN proxy settings.")
+        } message: { item in
+            Text(item.everyday == nil ? "It has to be restarted to pick up the VPN proxy settings."
+                 : "Your everyday profiles share one browser, so it has to be restarted, and all of its windows use the VPN until you quit it.")
         }
     }
 
@@ -263,23 +271,30 @@ struct ContentView: View {
                 .buttonStyle(.plain).foregroundStyle(.secondary).opacity(hovered == app ? 1 : 0)
                 .help("Remove from list").accessibilityLabel("Remove \(name)")
             let dataDir = dataDir(app), browserProfiles = dataDir.map(browserProfiles(dataDir:)) ?? []
+            let everyday = everydayDir(app).map(browserProfiles(dataDir:)) ?? []
             Group {
-                if let dataDir, !browserProfiles.isEmpty {
+                if let dataDir, !browserProfiles.isEmpty || !everyday.isEmpty {
                     // The button itself opens the profile used last; the menu picks one, any number side by side.
                     Menu("Launch") {
                         ForEach(browserProfiles, id: \.dir) { profile in Button(profile.name) { launch(app, profile: profile.dir) } }
-                        Divider()
+                        if !browserProfiles.isEmpty { Divider() }
                         Button("New Profile", systemImage: "plus") {
                             // Chromium creates the profile for a folder name it has not seen.
                             let n = (1...).first { !FileManager.default.fileExists(atPath: "\(dataDir)/Profile \($0)") }!
                             launch(app, profile: "Profile \(n)")
                         }
+                        if !everyday.isEmpty {
+                            // The browser's own profiles, logins and all. One process runs them all, so they cannot sit next to a normal window.
+                            Section("Everyday profiles (whole browser on the VPN)") {
+                                ForEach(everyday, id: \.dir) { profile in Button(profile.name) { launchEveryday(app, profile: profile.dir) } }
+                            }
+                        }
                     } primaryAction: { launch(app) }
                     .menuStyle(.button).fixedSize()
-                    .id(browserProfiles.map(\.dir))  // an already built menu does not pick up a new profile otherwise
+                    .id((browserProfiles + everyday).map(\.dir))  // an already built menu does not pick up a new profile otherwise
                 } else {
                     Button("Launch") {
-                        if coverage != .full, !running(app).isEmpty { relaunch = app } else { launch(app) }
+                        if coverage != .full, !running(app).isEmpty { relaunch = (app, nil) } else { launch(app) }
                     }
                 }
             }
@@ -315,7 +330,42 @@ struct ContentView: View {
         return "\(NSHomeDirectory())/.appvpn/profiles/\(id)"
     }
 
-    private func launch(_ app: URL, profile: String? = nil) {
+    /// A Chromium browser's own data folder, the one its everyday profiles live in.
+    /// ponytail: the browsers listed here; any other shows VPN-only profiles alone. One line adds a browser.
+    private func everydayDir(_ app: URL) -> String? {
+        let known = ["com.google.Chrome": "Google/Chrome", "com.microsoft.edgemac": "Microsoft Edge", "com.brave.Browser": "BraveSoftware/Brave-Browser",
+                     "com.vivaldi.Vivaldi": "Vivaldi", "org.chromium.Chromium": "Chromium"]
+        guard Coverage(app: app) == .full, let dir = Bundle(url: app)?.bundleIdentifier.flatMap({ known[$0] }) else { return nil }
+        return "\(NSHomeDirectory())/Library/Application Support/\(dir)"
+    }
+
+    /// The running browser that has `dataDir` open, from the lock Chromium keeps there: a link to "<host>-<pid>".
+    private func holder(of dataDir: String, app: URL) -> NSRunningApplication? {
+        guard let lock = try? FileManager.default.destinationOfSymbolicLink(atPath: dataDir + "/SingletonLock"),
+              let pid = lock.split(separator: "-").last.flatMap({ pid_t($0) }),
+              let instance = NSRunningApplication(processIdentifier: pid), !instance.isTerminated,
+              instance.bundleIdentifier == Bundle(url: app)?.bundleIdentifier else { return nil }
+        return instance
+    }
+
+    /// Opens an everyday profile. A browser already running on that folder takes over any new window,
+    /// so unless it was itself started through the VPN it has to quit first.
+    private func launchEveryday(_ app: URL, profile: String) {
+        guard let dir = everydayDir(app) else { return }
+        if let pid = holder(of: dir, app: app)?.processIdentifier {
+            let ps = Process(), out = Pipe()
+            ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+            ps.arguments = ["-ww", "-o", "args=", "-p", "\(pid)"]
+            ps.standardOutput = out
+            try? ps.run()
+            let args = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            guard args.contains("--proxy-server=socks5://\(proxyAddr)") else { relaunch = (app, profile); return }
+        }
+        launch(app, profile: profile, in: dir)
+    }
+
+    /// `dir` is the data folder for a browser; left out, it is the VPN-only one.
+    private func launch(_ app: URL, profile: String? = nil, in dir: String? = nil) {
         var args = ["-n", "-a", app.path]
         for name in ["ALL_PROXY", "all_proxy"] { args += ["--env", "\(name)=socks5h://\(proxyAddr)"] }
         for name in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] { args += ["--env", "\(name)=http://\(proxyAddr)"] }
@@ -324,8 +374,8 @@ struct ContentView: View {
             // Chromium switches: proxy everything, resolve no names locally, no WebRTC UDP around the proxy.
             args += ["--args", "--proxy-server=socks5://\(proxyAddr)", "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
                      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
-            if let dataDir = dataDir(app) {
-                // Own data folder, so a VPN window can run next to the normal browser instead of joining it.
+            if let dataDir = dir ?? dataDir(app) {
+                // Own data folder by default, so a VPN window can run next to the normal browser instead of joining it.
                 args.append("--user-data-dir=\(dataDir)")
                 if let profile { args.append("--profile-directory=\(profile)") }
             }
