@@ -163,26 +163,12 @@ struct ContentView: View {
             Text(problem?.message ?? "")
         }
         .confirmationDialog(
-            "\(relaunch?.app.deletingPathExtension().lastPathComponent ?? "") is already running",
+            relaunchTitle,
             isPresented: Binding(get: { relaunch != nil }, set: { if !$0 { relaunch = nil } }), presenting: relaunch
         ) { item in
-            Button("Quit and Relaunch via VPN") {
-                Task {
-                    let app = item.app, everydayDir = item.everyday.flatMap { _ in everydayDir(app) }
-                    let old = everydayDir.map { [holder(of: $0, app: app)].compactMap { $0 } } ?? running(app)
-                    old.forEach { $0.terminate() }
-                    for _ in 0..<50 where !old.allSatisfy(\.isTerminated) { try? await Task.sleep(for: .milliseconds(100)) }
-                    // Launching next to an instance that is still up would open a window in it, outside the VPN.
-                    guard old.allSatisfy(\.isTerminated) else {
-                        problem = ("Couldn't Quit \(app.deletingPathExtension().lastPathComponent)", "Quit it yourself, then launch it from here again.")
-                        return
-                    }
-                    launch(app, profile: item.everyday, in: everydayDir)
-                }
-            }
+            Button("Quit and Relaunch via VPN") { Task { await quitAndRelaunch(item.app, everyday: item.everyday) } }
         } message: { item in
-            Text(item.everyday == nil ? "It has to be restarted to pick up the VPN proxy settings."
-                 : "Your everyday profiles share one browser, so it has to be restarted, and all of its windows use the VPN until you quit it.")
+            Text(relaunchMessage(everyday: item.everyday != nil))
         }
     }
 
@@ -339,20 +325,38 @@ struct ContentView: View {
         return "\(NSHomeDirectory())/Library/Application Support/\(dir)"
     }
 
-    /// The running browser that has `dataDir` open, from the lock Chromium keeps there: a link to "<host>-<pid>".
-    private func holder(of dataDir: String, app: URL) -> NSRunningApplication? {
-        guard let lock = try? FileManager.default.destinationOfSymbolicLink(atPath: dataDir + "/SingletonLock"),
-              let pid = lock.split(separator: "-").last.flatMap({ pid_t($0) }),
-              let instance = NSRunningApplication(processIdentifier: pid), !instance.isTerminated,
-              instance.bundleIdentifier == Bundle(url: app)?.bundleIdentifier else { return nil }
-        return instance
+    // Plain strings worked out here, not inside `body`: the compiler on CI gives up on that expression otherwise.
+    private var relaunchTitle: String {
+        let name = relaunch?.app.deletingPathExtension().lastPathComponent ?? ""
+        return "\(name) is already running"
+    }
+
+    private func relaunchMessage(everyday: Bool) -> String {
+        if !everyday { return "It has to be restarted to pick up the VPN proxy settings." }
+        return "Your everyday profiles share one browser, so it has to be restarted, and all of its windows use the VPN until you quit it."
+    }
+
+    /// Quits what is running of `app` (for an everyday profile: only the browser on that data folder), then launches it through the VPN.
+    private func quitAndRelaunch(_ app: URL, everyday: String?) async {
+        let dir = everyday == nil ? nil : everydayDir(app)
+        var old = running(app)
+        if let dir { old = old.filter { $0.processIdentifier == browserHolder(dataDir: dir) } }
+        old.forEach { $0.terminate() }
+        // For a data folder its lock decides, as it does for the browser: while a process holds it, a launch only opens a window there, outside the VPN.
+        func gone() -> Bool { dir.map { browserHolder(dataDir: $0) == nil } ?? old.allSatisfy(\.isTerminated) }
+        for _ in 0..<50 where !gone() { try? await Task.sleep(for: .milliseconds(100)) }
+        guard gone() else {
+            problem = ("Couldn't Quit \(app.deletingPathExtension().lastPathComponent)", "Quit it yourself, then launch it from here again.")
+            return
+        }
+        launch(app, profile: everyday, in: dir)
     }
 
     /// Opens an everyday profile. A browser already running on that folder takes over any new window,
     /// so unless it was itself started through the VPN it has to quit first.
     private func launchEveryday(_ app: URL, profile: String) {
         guard let dir = everydayDir(app) else { return }
-        if let pid = holder(of: dir, app: app)?.processIdentifier {
+        if let pid = browserHolder(dataDir: dir) {
             let ps = Process(), out = Pipe()
             ps.executableURL = URL(fileURLWithPath: "/bin/ps")
             ps.arguments = ["-ww", "-o", "args=", "-p", "\(pid)"]
