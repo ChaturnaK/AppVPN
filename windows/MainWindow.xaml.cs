@@ -295,6 +295,23 @@ public partial class MainWindow : Window
     async void OnLaunch(object sender, RoutedEventArgs e)
     {
         var app = (AppRow)((FrameworkElement)sender).Tag;
+        // Once the browser has profiles the button asks which, and any number can be open side by side.
+        if (app.Coverage == Coverage.Full && ProfileStore.BrowserProfiles(DataDir(app.Path)) is { Count: > 0 } browserProfiles)
+        {
+            var menu = new ContextMenu { PlacementTarget = (UIElement)sender, Placement = PlacementMode.Bottom };
+            foreach (var (dir, name) in browserProfiles)
+            {
+                var item = new MenuItem { Header = name.Replace("_", "__") };
+                item.Click += (_, _) => Launch(app.Path, dir);
+                menu.Items.Add(item);
+            }
+            menu.Items.Add(new Separator());
+            var add = new MenuItem { Header = "New Profile" };
+            add.Click += (_, _) => NewProfile(app.Path);
+            menu.Items.Add(add);
+            menu.IsOpen = true;
+            return;
+        }
         if (app.Coverage != Coverage.Full && Running(app.Path).Length > 0)
         {
             if (MessageBox.Show(this, "It has to be restarted to pick up the VPN proxy settings.\n\nQuit and relaunch via VPN?", $"{app.Name} is already running",
@@ -314,7 +331,18 @@ public partial class MainWindow : Window
 
     static Process[] Running(string app) => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(app));
 
-    void Launch(string app)
+    /// Chromium creates the profile for a folder name it has not seen.
+    void NewProfile(string app)
+    {
+        int n = 1;
+        while (Directory.Exists(Path.Combine(DataDir(app), $"Profile {n}"))) n++;
+        Launch(app, $"Profile {n}");
+    }
+
+    /// Where a Chromium browser keeps its VPN-only profiles.
+    static string DataDir(string app) => Path.Combine(Vpn.Dir, "profiles", Path.GetFileNameWithoutExtension(app));
+
+    void Launch(string app, string? profile = null)
     {
         var start = new ProcessStartInfo(app) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(app) };
         start.Environment["ALL_PROXY"] = $"socks5h://{ProxyAddr}";
@@ -326,8 +354,12 @@ public partial class MainWindow : Window
             start.ArgumentList.Add($"--proxy-server=socks5://{ProxyAddr}");
             start.ArgumentList.Add("--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1");
             start.ArgumentList.Add("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
-            // Own profile, so a VPN window can run next to the normal browser instead of joining it.
-            if (coverage == Coverage.Full) start.ArgumentList.Add($"--user-data-dir={Path.Combine(Vpn.Dir, "profiles", Path.GetFileNameWithoutExtension(app))}");
+            // Own data folder, so a VPN window can run next to the normal browser instead of joining it.
+            if (coverage == Coverage.Full)
+            {
+                start.ArgumentList.Add($"--user-data-dir={DataDir(app)}");
+                if (profile != null) start.ArgumentList.Add($"--profile-directory={profile}");
+            }
         }
         try { Process.Start(start)?.Dispose(); }
         catch (Win32Exception e) { Problem($"Couldn't Launch {NameOf(app)}", e.Message); }

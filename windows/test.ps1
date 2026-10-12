@@ -52,6 +52,9 @@ Text "$f\routes.ovpn" "client`nremote vpn.example.com 1194`nredirect-gateway def
 Text "$f\winsys.ovpn" "client`nremote vpn.example.com 1194`nwin-sys C:/x`n"
 Copy-Item "$f\good.ovpn" "$f\1700000000000.ovpn"
 Text "$f\big.ovpn" ('a' * 1100000)
+# Profile 3 is new: not in Local State yet.
+'Default', 'Profile 2', 'Profile 3', 'System Profile' | ForEach-Object { New-Item -ItemType Directory "$tmp\browser\$_" | Out-Null }
+Text "$tmp\browser\Local State" '{"profile":{"info_cache":{"Profile 2":{"name":"Work"},"Default":{"name":"Me"}}}}'
 Run-App '--selftest-profiles', $tmp
 Remove-Item -Recurse -Force $tmp
 

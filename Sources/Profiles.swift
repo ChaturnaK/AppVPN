@@ -264,6 +264,17 @@ struct ImportURLSheet: View {
     }
 }
 
+/// The profiles in a Chromium browser's data folder: folder name ("Default", "Profile 1") and the name the browser shows.
+/// The folders are the list, since the browser writes the names to Local State late (a new profile's only when it quits).
+func browserProfiles(dataDir: String) -> [(dir: String, name: String)] {
+    let state = FileManager.default.contents(atPath: dataDir + "/Local State").flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+    let cache = (state?["profile"] as? [String: Any])?["info_cache"] as? [String: [String: Any]] ?? [:]
+    let dirs = (try? FileManager.default.contentsOfDirectory(atPath: dataDir)) ?? []
+    return dirs.filter { $0 == "Default" || $0.hasPrefix("Profile ") }
+        .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        .map { (dir: $0, name: cache[$0]?["name"] as? String ?? $0) }
+}
+
 private final class ResultBox { var value: Result<String, Error> = .failure(ProfileError(message: "no result")) }
 
 /// Checks the store against fixtures in `dir`, driven by test-profiles.sh. Returns 1 if any check failed.
@@ -330,5 +341,8 @@ func profileSelfTest(dir: String) -> Int32 {
     rejected("non-loopback http is refused", "Only https", urlImport("http://example.com/a.ovpn"))
     rejected("file over 1 MB is refused", "too large", fileImport("big.ovpn"))
     report("remote of good is host:port", store.remote("good") == "vpn.example.com:1194", store.remote("good") ?? "nil")
+    let browser = browserProfiles(dataDir: dir + "/browser").map { "\($0.dir)=\($0.name)" }
+    report("browser profiles are the folders, named by Local State", browser == ["Default=Me", "Profile 2=Work", "Profile 3=Profile 3"], "\(browser)")
+    report("browser never launched has no profiles", browserProfiles(dataDir: dir + "/missing").isEmpty)
     return failed ? 1 : 0
 }

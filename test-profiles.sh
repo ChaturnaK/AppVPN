@@ -23,6 +23,8 @@ printf 'client\nremote vpn.example.com 1194\nsetenv opt up /tmp/x.sh\n' > "$f/se
 printf 'client\nremote vpn.example.com 1194\n<up>\n/tmp/x.sh\n</up>\n' > "$f/block.ovpn"
 printf 'client\nremote vpn.example.com 1194\nca /etc/hosts\n' > "$f/outside.ovpn"
 cp "$f/good.ovpn" "$f/1700000000000.ovpn"
+mkdir -p "$tmp/browser/Default" "$tmp/browser/Profile 2" "$tmp/browser/Profile 3" "$tmp/browser/System Profile"  # 3 is new: not in Local State yet
+printf '{"profile":{"info_cache":{"Profile 2":{"name":"Work"},"Default":{"name":"Me"}}}}' > "$tmp/browser/Local State"
 dd if=/dev/zero bs=1024 count=1100 2>/dev/null | tr '\0' 'a' > "$f/big.ovpn"
 
 python3 -m http.server 8765 --bind 127.0.0.1 --directory "$f" >/dev/null 2>&1 &

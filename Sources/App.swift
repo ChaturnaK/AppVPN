@@ -262,8 +262,26 @@ struct ContentView: View {
             Button { remove(app) } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain).foregroundStyle(.secondary).opacity(hovered == app ? 1 : 0)
                 .help("Remove from list").accessibilityLabel("Remove \(name)")
-            Button("Launch") {
-                if coverage != .full, !running(app).isEmpty { relaunch = app } else { launch(app) }
+            let dataDir = dataDir(app), browserProfiles = dataDir.map(browserProfiles(dataDir:)) ?? []
+            Group {
+                if let dataDir, !browserProfiles.isEmpty {
+                    // The button itself opens the profile used last; the menu picks one, any number side by side.
+                    Menu("Launch") {
+                        ForEach(browserProfiles, id: \.dir) { profile in Button(profile.name) { launch(app, profile: profile.dir) } }
+                        Divider()
+                        Button("New Profile", systemImage: "plus") {
+                            // Chromium creates the profile for a folder name it has not seen.
+                            let n = (1...).first { !FileManager.default.fileExists(atPath: "\(dataDir)/Profile \($0)") }!
+                            launch(app, profile: "Profile \(n)")
+                        }
+                    } primaryAction: { launch(app) }
+                    .menuStyle(.button).fixedSize()
+                    .id(browserProfiles.map(\.dir))  // an already built menu does not pick up a new profile otherwise
+                } else {
+                    Button("Launch") {
+                        if coverage != .full, !running(app).isEmpty { relaunch = app } else { launch(app) }
+                    }
+                }
             }
             .buttonStyle(.glass).disabled(!vpn.connected)
             .help(vpn.connected ? "Open \(name) through the VPN" : "Connect to the VPN first")
@@ -291,7 +309,13 @@ struct ContentView: View {
         Bundle(url: app)?.bundleIdentifier.map(NSRunningApplication.runningApplications(withBundleIdentifier:)) ?? []
     }
 
-    private func launch(_ app: URL) {
+    /// Where a Chromium browser keeps its VPN-only profiles; nil for other apps.
+    private func dataDir(_ app: URL) -> String? {
+        guard Coverage(app: app) == .full, let id = Bundle(url: app)?.bundleIdentifier else { return nil }
+        return "\(NSHomeDirectory())/.appvpn/profiles/\(id)"
+    }
+
+    private func launch(_ app: URL, profile: String? = nil) {
         var args = ["-n", "-a", app.path]
         for name in ["ALL_PROXY", "all_proxy"] { args += ["--env", "\(name)=socks5h://\(proxyAddr)"] }
         for name in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] { args += ["--env", "\(name)=http://\(proxyAddr)"] }
@@ -300,9 +324,10 @@ struct ContentView: View {
             // Chromium switches: proxy everything, resolve no names locally, no WebRTC UDP around the proxy.
             args += ["--args", "--proxy-server=socks5://\(proxyAddr)", "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
                      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
-            if coverage == .full, let id = Bundle(url: app)?.bundleIdentifier {
-                // Own profile, so a VPN window can run next to the normal browser instead of joining it.
-                args.append("--user-data-dir=\(NSHomeDirectory())/.appvpn/profiles/\(id)")
+            if let dataDir = dataDir(app) {
+                // Own data folder, so a VPN window can run next to the normal browser instead of joining it.
+                args.append("--user-data-dir=\(dataDir)")
+                if let profile { args.append("--profile-directory=\(profile)") }
             }
         }
         let p = Process()
