@@ -124,6 +124,7 @@ On both systems:
 
 - Not a system-wide VPN and not a kernel-level per-app VPN. Apps that ignore proxy settings (Safari, most native apps, games) are not routed. Doing that properly needs a Network Extension on macOS, which requires the paid Apple Developer Program, or a filter driver on Windows.
 - IPv4 only through the tunnel; IPv6 targets are refused rather than sent direct.
+- An everyday browser profile brings its extensions along. One that sets the browser's proxy itself (a proxy switcher, a VPN extension) outranks the settings AppVPN starts the browser with, and so does a proxy set by an organisation's policy: that traffic does not use the tunnel. The VPN-only profiles start without extensions.
 - A network switch without sleep is noticed by OpenVPN's ping timeout (60 s by default, or whatever the server pushes), not instantly.
 - No menu-bar or tray item, launch at login, traffic statistics or auto-update.
 - Neither app is signed with a paid certificate (see [Install](#install)).

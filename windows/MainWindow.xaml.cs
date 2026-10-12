@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation.Peers;
@@ -348,12 +349,17 @@ public partial class MainWindow : Window
         Launch(app, Directory.Exists(Path.Combine(DataDir(app), "Default")) ? $"Profile {n}" : null);
     }
 
-    /// A Chromium browser's own data folder, the one its everyday profiles live in.
-    /// ponytail: the browsers listed here; any other shows VPN-only profiles alone. One line adds a browser.
-    static string? EverydayDir(string app) => Path.GetFileNameWithoutExtension(app).ToLowerInvariant() switch
+    /// A Chromium browser's own data folder, the one its everyday profiles live in. Such a browser is installed as
+    /// <Vendor>\<Product>\Application\<program> (some without the vendor) and keeps "User Data" under the same names in the
+    /// user's local app data. The program name alone would not do: Chrome, its Canary and Chromium are all chrome.exe.
+    /// ponytail: a browser laid out differently (Opera) shows VPN-only profiles alone.
+    static string? EverydayDir(string app)
     {
-        "chrome" => @"Google\Chrome", "msedge" => @"Microsoft\Edge", "brave" => @"BraveSoftware\Brave-Browser", "vivaldi" => "Vivaldi", "chromium" => "Chromium", _ => null,
-    } is { } dir ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), dir, "User Data") : null;
+        var parts = Path.GetDirectoryName(app)!.Split(Path.DirectorySeparatorChar);
+        if (parts.Length < 3 || !parts[^1].Equals("Application", StringComparison.OrdinalIgnoreCase)) return null;
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return new[] { Path.Combine(local, parts[^3], parts[^2], "User Data"), Path.Combine(local, parts[^2], "User Data") }.FirstOrDefault(Directory.Exists);
+    }
 
     /// Chromium keeps "lockfile" in a data folder open, shared with nobody, for as long as it runs on that folder.
     static bool InUse(string dataDir)
@@ -363,19 +369,43 @@ public partial class MainWindow : Window
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return true; }
     }
 
+    /// The browser running on a data folder: Chromium names a message-only window after the folder.
+    static Process? HolderOf(string dataDir)
+    {
+        var window = FindWindowEx(-3, 0, "Chrome_MessageWindow", dataDir);  // -3: among message-only windows
+        if (window == 0) return null;
+        GetWindowThreadProcessId(window, out var pid);
+        try { return Process.GetProcessById((int)pid); } catch (ArgumentException) { return null; }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string type, string title);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+
     /// Opens an everyday profile. A browser already running on that folder takes over any new window,
     /// so unless it is the one started from here through the VPN it has to be closed first.
-    /// ponytail: the user closes it, and a browser started through the VPN before AppVPN was restarted counts as a normal one.
-    /// To quit it from here, find the process by its command line (WMI) and close its windows.
+    /// ponytail: the user closes its windows, and a browser started through the VPN before AppVPN was restarted counts as a normal one.
+    /// To quit it from here, close every window of the process HolderOf finds.
     void LaunchEveryday(AppRow app, string profile)
     {
         var dir = EverydayDir(app.Path)!;
         if (InUse(dir) && !(viaVpn.TryGetValue(dir, out var ours) && !ours.HasExited))
         {
-            Problem($"{app.Name} is already running",
-                    "Your everyday profiles share one browser, so it has to be restarted, and all of its windows use the VPN until you close it.\n\n" +
-                    $"Close {app.Name} completely (also in the notification area, if it keeps running there), then pick the profile again.");
-            return;
+            // Left running with no window (Edge's startup boost, background apps), it has nothing the user could close.
+            using var holder = HolderOf(dir);
+            if (holder is { MainWindowHandle: 0 })
+            {
+                if (MessageBox.Show(this, "It is running in the background, outside the VPN.\n\nEnd it and relaunch via VPN?", $"{app.Name} is already running",
+                                    MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+                try { holder.Kill(); holder.WaitForExit(3000); }
+                catch (Exception e) when (e is Win32Exception or InvalidOperationException) { }
+            }
+            if (InUse(dir))
+            {
+                Problem($"{app.Name} is already running",
+                        "Your everyday profiles share one browser, so it has to be restarted, and all of its windows use the VPN until you close it.\n\n" +
+                        $"Close {app.Name} completely (also in the notification area, if it keeps running there), then pick the profile again.");
+                return;
+            }
         }
         Launch(app.Path, profile, dir);
     }

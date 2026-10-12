@@ -279,9 +279,9 @@ struct ContentView: View {
                         ForEach(browserProfiles, id: \.dir) { profile in Button(profile.name) { launch(app, profile: profile.dir) } }
                         if !browserProfiles.isEmpty { Divider() }
                         Button("New Profile", systemImage: "plus") {
-                            // Chromium creates the profile for a folder name it has not seen.
+                            // Chromium creates the profile for a folder name it has not seen. The first one is its "Default".
                             let n = (1...).first { !FileManager.default.fileExists(atPath: "\(dataDir)/Profile \($0)") }!
-                            launch(app, profile: "Profile \(n)")
+                            launch(app, profile: browserProfiles.isEmpty ? nil : "Profile \(n)")
                         }
                         if !everyday.isEmpty {
                             // The browser's own profiles, logins and all. One process runs them all, so they cannot sit next to a normal window.
