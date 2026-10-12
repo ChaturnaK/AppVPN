@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Automation.Peers;
@@ -67,6 +68,7 @@ public partial class MainWindow : Window
     readonly ProfileStore store = new();
     readonly Settings settings = Settings.Load();
     readonly Dictionary<string, ImageSource?> icons = [];
+    readonly Dictionary<string, Process> viaVpn = [];  // everyday data folder -> the browser started on it from here
     string[] profiles = [];
 
     bool Idle => vpn.State == "DISCONNECTED" && !vpn.Busy;
@@ -295,6 +297,31 @@ public partial class MainWindow : Window
     async void OnLaunch(object sender, RoutedEventArgs e)
     {
         var app = (AppRow)((FrameworkElement)sender).Tag;
+        // Once the browser has profiles the button asks which, and any number can be open side by side.
+        var browserProfiles = app.Coverage == Coverage.Full ? ProfileStore.BrowserProfiles(DataDir(app.Path)) : [];
+        var everyday = app.Coverage == Coverage.Full && EverydayDir(app.Path) is { } own ? ProfileStore.BrowserProfiles(own) : [];
+        if (browserProfiles.Count + everyday.Count > 0)
+        {
+            var menu = new ContextMenu { PlacementTarget = (UIElement)sender, Placement = PlacementMode.Bottom };
+            void Add(string header, Action action)
+            {
+                var item = new MenuItem { Header = header.Replace("_", "__") };
+                item.Click += (_, _) => action();
+                menu.Items.Add(item);
+            }
+            foreach (var (dir, name) in browserProfiles) Add(name, () => Launch(app.Path, dir));
+            if (browserProfiles.Count > 0) menu.Items.Add(new Separator());
+            Add("New Profile", () => NewProfile(app.Path));
+            if (everyday.Count > 0)
+            {
+                // The browser's own profiles, logins and all. One process runs them all, so they cannot sit next to a normal window.
+                menu.Items.Add(new Separator());
+                menu.Items.Add(new MenuItem { Header = "Everyday profiles (whole browser on the VPN)", IsEnabled = false });
+                foreach (var (dir, name) in everyday) Add(name, () => LaunchEveryday(app, dir));
+            }
+            menu.IsOpen = true;
+            return;
+        }
         if (app.Coverage != Coverage.Full && Running(app.Path).Length > 0)
         {
             if (MessageBox.Show(this, "It has to be restarted to pick up the VPN proxy settings.\n\nQuit and relaunch via VPN?", $"{app.Name} is already running",
@@ -314,7 +341,80 @@ public partial class MainWindow : Window
 
     static Process[] Running(string app) => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(app));
 
-    void Launch(string app)
+    /// Chromium creates the profile for a folder name it has not seen. The first one is its "Default".
+    void NewProfile(string app)
+    {
+        int n = 1;
+        while (Directory.Exists(Path.Combine(DataDir(app), $"Profile {n}"))) n++;
+        Launch(app, Directory.Exists(Path.Combine(DataDir(app), "Default")) ? $"Profile {n}" : null);
+    }
+
+    /// A Chromium browser's own data folder, the one its everyday profiles live in. Such a browser is installed as
+    /// <Vendor>\<Product>\Application\<program> (some without the vendor) and keeps "User Data" under the same names in the
+    /// user's local app data. The program name alone would not do: Chrome, its Canary and Chromium are all chrome.exe.
+    /// ponytail: a browser laid out differently (Opera) shows VPN-only profiles alone.
+    static string? EverydayDir(string app)
+    {
+        var parts = Path.GetDirectoryName(app)!.Split(Path.DirectorySeparatorChar);
+        if (parts.Length < 3 || !parts[^1].Equals("Application", StringComparison.OrdinalIgnoreCase)) return null;
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return new[] { Path.Combine(local, parts[^3], parts[^2], "User Data"), Path.Combine(local, parts[^2], "User Data") }.FirstOrDefault(Directory.Exists);
+    }
+
+    /// Chromium keeps "lockfile" in a data folder open, shared with nobody, for as long as it runs on that folder.
+    static bool InUse(string dataDir)
+    {
+        try { using var _ = File.Open(Path.Combine(dataDir, "lockfile"), FileMode.Open, FileAccess.Read, FileShare.None); return false; }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return false; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return true; }
+    }
+
+    /// The browser running on a data folder: Chromium names a message-only window after the folder.
+    static Process? HolderOf(string dataDir)
+    {
+        var window = FindWindowEx(-3, 0, "Chrome_MessageWindow", dataDir);  // -3: among message-only windows
+        if (window == 0) return null;
+        GetWindowThreadProcessId(window, out var pid);
+        try { return Process.GetProcessById((int)pid); } catch (ArgumentException) { return null; }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string type, string title);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+
+    /// Opens an everyday profile. A browser already running on that folder takes over any new window,
+    /// so unless it is the one started from here through the VPN it has to be closed first.
+    /// ponytail: the user closes its windows, and a browser started through the VPN before AppVPN was restarted counts as a normal one.
+    /// To quit it from here, close every window of the process HolderOf finds.
+    void LaunchEveryday(AppRow app, string profile)
+    {
+        var dir = EverydayDir(app.Path)!;
+        if (InUse(dir) && !(viaVpn.TryGetValue(dir, out var ours) && !ours.HasExited))
+        {
+            // Left running with no window (Edge's startup boost, background apps), it has nothing the user could close.
+            using var holder = HolderOf(dir);
+            if (holder is { MainWindowHandle: 0 })
+            {
+                if (MessageBox.Show(this, "It is running in the background, outside the VPN.\n\nEnd it and relaunch via VPN?", $"{app.Name} is already running",
+                                    MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+                try { holder.Kill(); holder.WaitForExit(3000); }
+                catch (Exception e) when (e is Win32Exception or InvalidOperationException) { }
+            }
+            if (InUse(dir))
+            {
+                Problem($"{app.Name} is already running",
+                        "Your everyday profiles share one browser, so it has to be restarted, and all of its windows use the VPN until you close it.\n\n" +
+                        $"Close {app.Name} completely (also in the notification area, if it keeps running there), then pick the profile again.");
+                return;
+            }
+        }
+        Launch(app.Path, profile, dir);
+    }
+
+    /// Where a Chromium browser keeps its VPN-only profiles.
+    static string DataDir(string app) => Path.Combine(Vpn.Dir, "profiles", Path.GetFileNameWithoutExtension(app));
+
+    /// `dir` is the data folder for a browser; left out, it is the VPN-only one.
+    void Launch(string app, string? profile = null, string? dir = null)
     {
         var start = new ProcessStartInfo(app) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(app) };
         start.Environment["ALL_PROXY"] = $"socks5h://{ProxyAddr}";
@@ -326,10 +426,20 @@ public partial class MainWindow : Window
             start.ArgumentList.Add($"--proxy-server=socks5://{ProxyAddr}");
             start.ArgumentList.Add("--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1");
             start.ArgumentList.Add("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
-            // Own profile, so a VPN window can run next to the normal browser instead of joining it.
-            if (coverage == Coverage.Full) start.ArgumentList.Add($"--user-data-dir={Path.Combine(Vpn.Dir, "profiles", Path.GetFileNameWithoutExtension(app))}");
+            // Own data folder by default, so a VPN window can run next to the normal browser instead of joining it.
+            if (coverage == Coverage.Full)
+            {
+                start.ArgumentList.Add($"--user-data-dir={dir ?? DataDir(app)}");
+                if (profile != null) start.ArgumentList.Add($"--profile-directory={profile}");
+            }
         }
-        try { Process.Start(start)?.Dispose(); }
+        try
+        {
+            var process = Process.Start(start);
+            // Kept for an everyday folder: while it runs, that browser is on the VPN. A later launch only hands over to it and exits.
+            if (dir != null && process != null && !(viaVpn.TryGetValue(dir, out var ours) && !ours.HasExited)) viaVpn[dir] = process;
+            else process?.Dispose();
+        }
         catch (Win32Exception e) { Problem($"Couldn't Launch {NameOf(app)}", e.Message); }
     }
 

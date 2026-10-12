@@ -264,6 +264,26 @@ struct ImportURLSheet: View {
     }
 }
 
+/// The profiles in a Chromium browser's data folder: folder name ("Default", "Profile 1") and the name the browser shows.
+/// The folders are the list, since the browser writes the names to Local State late (a new profile's only when it quits).
+func browserProfiles(dataDir: String) -> [(dir: String, name: String)] {
+    let state = FileManager.default.contents(atPath: dataDir + "/Local State").flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+    let cache = (state?["profile"] as? [String: Any])?["info_cache"] as? [String: [String: Any]] ?? [:]
+    let dirs = (try? FileManager.default.contentsOfDirectory(atPath: dataDir)) ?? []
+    return dirs.filter { $0 == "Default" || $0.hasPrefix("Profile ") }
+        .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        .map { (dir: $0, name: cache[$0]?["name"] as? String ?? $0) }
+}
+
+/// The process that has a Chromium data folder open, from the lock the browser keeps there: a link to "<host>-<pid>".
+/// nil when there is none, or the lock is left over from a browser that is gone.
+func browserHolder(dataDir: String) -> pid_t? {
+    guard let lock = try? FileManager.default.destinationOfSymbolicLink(atPath: dataDir + "/SingletonLock"),
+          let pid = lock.split(separator: "-").last.flatMap({ pid_t($0) }), pid > 0,
+          kill(pid, 0) == 0 || errno == EPERM else { return nil }
+    return pid
+}
+
 private final class ResultBox { var value: Result<String, Error> = .failure(ProfileError(message: "no result")) }
 
 /// Checks the store against fixtures in `dir`, driven by test-profiles.sh. Returns 1 if any check failed.
@@ -330,5 +350,16 @@ func profileSelfTest(dir: String) -> Int32 {
     rejected("non-loopback http is refused", "Only https", urlImport("http://example.com/a.ovpn"))
     rejected("file over 1 MB is refused", "too large", fileImport("big.ovpn"))
     report("remote of good is host:port", store.remote("good") == "vpn.example.com:1194", store.remote("good") ?? "nil")
+    let browser = browserProfiles(dataDir: dir + "/browser").map { "\($0.dir)=\($0.name)" }
+    report("browser profiles are the folders, named by Local State", browser == ["Default=Me", "Profile 2=Work", "Profile 3=Profile 3"], "\(browser)")
+    report("browser never launched has no profiles", browserProfiles(dataDir: dir + "/missing").isEmpty)
+    func locked(_ target: String) -> pid_t? {
+        try? FileManager.default.removeItem(atPath: dir + "/browser/SingletonLock")
+        try? FileManager.default.createSymbolicLink(atPath: dir + "/browser/SingletonLock", withDestinationPath: target)
+        return browserHolder(dataDir: dir + "/browser")
+    }
+    let me = getpid()
+    report("browser lock names the running process, also behind a host name with hyphens", locked("my-mac.local-\(me)") == me)
+    report("browser lock of a process that is gone counts as none", locked("my-mac.local-99999999") == nil && browserHolder(dataDir: dir + "/missing") == nil)
     return failed ? 1 : 0
 }

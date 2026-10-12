@@ -1,0 +1,19 @@
+AppVPN
+
+AppVPN is a VPN app for Mac and Windows that works per app. You pick which
+apps should use the VPN and start them from AppVPN. Only those apps go through
+the VPN. Everything else on the computer keeps using its normal internet
+connection.
+
+It connects with a standard OpenVPN profile (an .ovpn file), the kind most VPN
+providers and workplaces hand out.
+
+If the VPN connection drops, the chosen apps are cut off until it is back.
+They are never quietly switched to the normal connection.
+
+Runs on:
+- Mac: macOS 26 or later, Apple silicon
+- Windows: Windows 11, x64 or ARM, with a setup program for each
+
+Source, downloads and full documentation: https://github.com/ChaturnaK/AppVPN
+See README.md for installation, security, limits and tests.

@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using Microsoft.VisualBasic.FileIO;
 
 sealed class ProfileException(string message) : Exception(message);
@@ -157,6 +158,26 @@ sealed class ProfileStore(string? dir = null)
     }
 
     /// Checks the store against fixtures in `dir`, driven by test.ps1. Returns 1 if any check failed.
+    /// The profiles in a Chromium browser's data folder: folder name ("Default", "Profile 1") and the name the browser shows.
+    /// The folders are the list, since the browser writes the names to Local State late (a new profile's only when it quits).
+    public static List<(string Dir, string Name)> BrowserProfiles(string dataDir)
+    {
+        var names = new Dictionary<string, string>();
+        try
+        {
+            using var state = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dataDir, "Local State")));
+            foreach (var p in state.RootElement.GetProperty("profile").GetProperty("info_cache").EnumerateObject())
+                if (p.Value.TryGetProperty("name", out var name) && name.GetString() is { } shown) names[p.Name] = shown;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
+        try
+        {
+            return Directory.GetDirectories(dataDir).Select(d => Path.GetFileName(d)).Where(d => d == "Default" || d.StartsWith("Profile "))
+                .OrderBy(d => d.Length).ThenBy(d => d, StringComparer.Ordinal).Select(d => (d, names.GetValueOrDefault(d, d))).ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+    }
+
     public static int SelfTest(string dir)
     {
         var store = new ProfileStore(Path.Combine(dir, "store"));
@@ -233,6 +254,9 @@ sealed class ProfileStore(string? dir = null)
         Rejected("non-loopback http is refused", "Only https", UrlImport("http://example.com/a.ovpn", out e), e);
         Rejected("file over 1 MB is refused", "too large", FileImport("big.ovpn", out e), e);
         Report("remote of good is host:port", store.Remote("good") == "vpn.example.com:1194", store.Remote("good") ?? "null");
+        var browser = string.Join(",", BrowserProfiles(Path.Combine(dir, "browser")).Select(p => $"{p.Dir}={p.Name}"));
+        Report("browser profiles are the folders, named by Local State", browser == "Default=Me,Profile 2=Work,Profile 3=Profile 3", browser);
+        Report("browser never launched has no profiles", BrowserProfiles(Path.Combine(dir, "missing")).Count == 0);
         return failed ? 1 : 0;
     }
 }
