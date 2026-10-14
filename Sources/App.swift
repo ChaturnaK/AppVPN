@@ -76,6 +76,7 @@ struct ContentView: View {
     @EnvironmentObject private var vpn: VPN
     @AppStorage("selectedProfile") private var selected = ""
     @AppStorage("apps") private var appsRaw = ""
+    @AppStorage("blocked") private var blockedRaw = ""  // apps launched with every connection but the proxy blocked
     @State private var relaunch: (app: URL, everyday: String?)?  // everyday: the profile to open in the browser's own data folder
     @State private var profiles: [String] = []
     @State private var showURLSheet = false
@@ -241,18 +242,28 @@ struct ContentView: View {
 
     private func row(_ app: URL) -> some View {
         let coverage = Coverage(app: app), name = app.deletingPathExtension().lastPathComponent
+        let blocked = blockedRaw.split(separator: "\n").contains(Substring(app.path)) && canBlock(app)
+        let help = blocked ? "The app's own connections are blocked unless they go through the VPN. A helper the system starts for it (a web view, a background download) is not covered." : coverage.help
         return HStack(spacing: 12) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: app.path)).resizable().frame(width: 34, height: 34).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).fontWeight(.medium).lineLimit(1)
                 HStack(spacing: 4) {
-                    Image(systemName: coverage.symbol).foregroundStyle(coverage.tint)
-                    Text(coverage.summary)
+                    Image(systemName: blocked ? "hand.raised.fill" : coverage.symbol).foregroundStyle(blocked ? .green : coverage.tint)
+                    Text(blocked ? "Direct traffic blocked" : coverage.summary)
                 }
                 .font(.caption).foregroundStyle(.secondary)
             }
-            .accessibilityElement(children: .combine).accessibilityHint(coverage.help).help(coverage.help)
+            .accessibilityElement(children: .combine).accessibilityHint(help).help(help)
             Spacer()
+            if canBlock(app) {
+                Toggle(isOn: Binding(get: { blocked }, set: { on in
+                    blockedRaw = (blockedRaw.split(separator: "\n").map(String.init).filter { $0 != app.path } + (on ? [app.path] : [])).joined(separator: "\n")
+                })) { Image(systemName: "hand.raised") }
+                    .toggleStyle(.button).buttonStyle(.plain).foregroundStyle(blocked ? .green : .secondary)
+                    .help("Block direct connections: the app can reach the VPN proxy and nothing else. Takes effect at the next launch.")
+                    .accessibilityLabel("Block direct connections for \(name)")
+            }
             Button { remove(app) } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain).foregroundStyle(.secondary).opacity(hovered == app ? 1 : 0)
                 .help("Remove from list").accessibilityLabel("Remove \(name)")
@@ -296,6 +307,17 @@ struct ContentView: View {
 
     private func remove(_ app: URL) {
         appsRaw = apps.filter { $0 != app }.map(\.path).joined(separator: "\n")
+    }
+
+    /// Whether `Proxy.sandbox` can hold the app: a process takes one sandbox, so an app that applies its own would die at launch.
+    private func canBlock(_ app: URL) -> Bool {
+        let frameworks = (try? FileManager.default.contentsOfDirectory(atPath: app.appendingPathComponent("Contents/Frameworks").path)) ?? []
+        guard Coverage(app: app) == .envOnly, !frameworks.contains("Chromium Embedded Framework.framework") else { return false }
+        var code: SecStaticCode?, info: CFDictionary?
+        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code,
+              SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSRequirementInformation), &info) == errSecSuccess else { return true }
+        let entitlements = (info as? [String: Any])?[kSecCodeInfoEntitlementsDict as String] as? [String: Any]
+        return entitlements?["com.apple.security.app-sandbox"] as? Bool != true
     }
 
     private func copyShellSettings() {
@@ -370,9 +392,27 @@ struct ContentView: View {
 
     /// `dir` is the data folder for a browser; left out, it is the VPN-only one.
     private func launch(_ app: URL, profile: String? = nil, in dir: String? = nil) {
-        var args = ["-n", "-a", app.path]
-        for name in ["ALL_PROXY", "all_proxy"] { args += ["--env", "\(name)=socks5h://\(proxyAddr)"] }
-        for name in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] { args += ["--env", "\(name)=http://\(proxyAddr)"] }
+        var env = ["ALL_PROXY": "socks5h://\(proxyAddr)", "all_proxy": "socks5h://\(proxyAddr)"]
+        for name in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] { env[name] = "http://\(proxyAddr)" }
+        let p = Process()
+        if blockedRaw.split(separator: "\n").contains(Substring(app.path)), canBlock(app), let binary = Bundle(url: app)?.executableURL {
+            // Not through `open`: that has the system start the app, outside the sandbox. The sandbox passes to what the app itself starts.
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+            p.arguments = ["-p", Proxy.sandbox, binary.path]
+            p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            try? p.run()
+            // Which apps can take it is not knowable up front (some system apps are killed when not started by the system), so say so when one dies.
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if !p.isRunning, p.terminationStatus != 0 {
+                    problem = ("\(app.deletingPathExtension().lastPathComponent) Couldn't Start", "It does not run with direct connections blocked. Turn that off for this app to launch it.")
+                }
+            }
+            return
+        }
+        var args = ["-n", "-a", app.path] + env.sorted { $0.key < $1.key }.flatMap { ["--env", "\($0.key)=\($0.value)"] }
         let coverage = Coverage(app: app)
         if coverage != .envOnly {
             // Chromium switches: proxy everything, resolve no names locally, no WebRTC UDP around the proxy.
@@ -380,11 +420,11 @@ struct ContentView: View {
                      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
             if let dataDir = dir ?? dataDir(app) {
                 // Own data folder by default, so a VPN window can run next to the normal browser instead of joining it.
-                args.append("--user-data-dir=\(dataDir)")
+                // --test-type is the only switch that hides the browser's "unsupported command-line flag" bar for --host-resolver-rules.
+                args += ["--user-data-dir=\(dataDir)", "--test-type"]
                 if let profile { args.append("--profile-directory=\(profile)") }
             }
         }
-        let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = args
         try? p.run()

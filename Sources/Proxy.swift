@@ -5,6 +5,10 @@ import Foundation
 /// every connect fails: nothing ever falls back to the default route.
 final class Proxy {
     static let port: UInt16 = 18964
+    /// For `sandbox-exec`: a program started under it reaches this proxy and nothing else, not even the local resolver.
+    /// ponytail: sandbox-exec is deprecated and a process takes one sandbox only, so apps that apply their own
+    /// (Chromium, Electron, App Sandbox) cannot start under it. The supported way is a Network Extension content filter.
+    static let sandbox = "(version 1)(allow default)(deny network-outbound)(allow network-outbound (remote ip \"localhost:\(port)\"))"
 
     private let lock = NSLock()
     private var ifIndex: UInt32 = 0
@@ -251,10 +255,10 @@ func selfTest(interface: String) -> Int32 {
     do { try proxy.start() } catch { print("FAIL listen: \(error)"); return 1 }
     let addr = "127.0.0.1:\(Proxy.port)"
     var failed = false
-    func check(_ name: String, expect: Bool, _ args: String...) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        p.arguments = ["-s", "-m", "10", "-o", "/dev/null"] + args
+    func check(_ name: String, expect: Bool, sandboxed: Bool = false, _ args: String...) {
+        let p = Process(), curl = ["/usr/bin/curl", "-s", "-m", "10", "-o", "/dev/null"] + args
+        p.executableURL = URL(fileURLWithPath: sandboxed ? "/usr/bin/sandbox-exec" : curl[0])
+        p.arguments = sandboxed ? ["-p", Proxy.sandbox] + curl : Array(curl.dropFirst())
         try? p.run()
         p.waitUntilExit()
         let ok = (p.terminationStatus == 0) == expect
@@ -268,6 +272,9 @@ func selfTest(interface: String) -> Int32 {
     check("http CONNECT", expect: true, "-x", "http://\(addr)", "https://example.com")
     check("plain http", expect: true, "-f", "-x", "http://\(addr)", "http://example.com/?a=1")
     check("unknown host fails", expect: false, "-x", "socks5h://\(addr)", "https://nope.invalid")
+    check("sandboxed: reaches the proxy", expect: true, sandboxed: true, "-x", "socks5h://\(addr)", "https://example.com")
+    check("sandboxed: direct connection blocked", expect: false, sandboxed: true, "https://1.1.1.1")
+    check("sandboxed: local DNS blocked", expect: false, sandboxed: true, "https://example.com")
     proxy.setTunnel(ifName: "nosuchif0", dns: nil)
     check("missing interface: fails closed", expect: false, "-x", "socks5h://\(addr)", "https://example.com")
     return failed ? 1 : 0
