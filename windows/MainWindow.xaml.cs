@@ -430,6 +430,8 @@ public partial class MainWindow : Window
             if (coverage == Coverage.Full)
             {
                 start.ArgumentList.Add($"--user-data-dir={dir ?? DataDir(app)}");
+                // The only switch that hides the browser's "unsupported command-line flag" bar for --host-resolver-rules.
+                start.ArgumentList.Add("--test-type");
                 if (profile != null) start.ArgumentList.Add($"--profile-directory={profile}");
             }
         }

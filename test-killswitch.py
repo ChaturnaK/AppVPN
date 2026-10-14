@@ -20,6 +20,7 @@ CHROME_FLAGS = [
     "--proxy-server=socks5://127.0.0.1:18964",
     "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    "--test-type",
 ]
 PROFILE_PREFIX = "appvpn-killswitch-"
 

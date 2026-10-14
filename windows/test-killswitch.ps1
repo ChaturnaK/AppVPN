@@ -54,7 +54,7 @@ try {
     # (Edge prints nothing when started elevated, so this runs only in an ordinary session.)
     New-Item -ItemType Directory $tmp | Out-Null
     if ((Test-Path $edge) -and (Dump-Dom 'https://example.com' @()) -match 'Example Domain') {
-        $vpnFlags = "--proxy-server=socks5://127.0.0.1:$port", '"--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'
+        $vpnFlags = "--proxy-server=socks5://127.0.0.1:$port", '"--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--test-type'
         Check 'Edge with the VPN switches does not fall back to a direct connection' ((Dump-Dom 'https://example.com' $vpnFlags) -notmatch 'Example Domain')
     } else { Write-Host 'skip Edge check (Edge not found, or it prints no page here even without the proxy)' }
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

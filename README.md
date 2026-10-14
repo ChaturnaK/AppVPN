@@ -66,6 +66,8 @@ Per-app routing here works through a local proxy, so it depends on the app honou
 
 Apps with their own SOCKS5 setting can be pointed at `127.0.0.1:18964` by hand.
 
+**Blocking direct connections (macOS).** A "May bypass the VPN" app has a hand button next to **Launch**. With it on, the app is started in a sandbox that lets it reach AppVPN's proxy and nothing else: whatever it does not send through the proxy is blocked instead of going out over the normal connection, name lookups included. The label then reads "Direct traffic blocked". See [Limits](#limits) for what this does not cover.
+
 ## How it works
 
 ```
@@ -82,7 +84,7 @@ Apps with their own SOCKS5 setting can be pointed at `127.0.0.1:18964` by hand.
 - **Proxy.** AppVPN listens on loopback and speaks SOCKS5 and HTTP (`CONNECT` and plain). It resolves names itself over the tunnel, using the DNS server the VPN pushed, so lookups don't leak to the local resolver.
 - **Fail closed.** The proxy is pinned only while OpenVPN reports `CONNECTED`. In any other state, or if AppVPN is not running, proxy connections fail.
 - **Control.** AppVPN talks to OpenVPN over its management interface: state changes, disconnect, and a forced reconnect after wake from sleep.
-- **Launching.** Apps are started with proxy environment variables; Chromium and Electron apps also get `--proxy-server`, `--host-resolver-rules` (no local DNS) and a WebRTC policy that forbids UDP around the proxy.
+- **Launching.** Apps are started with proxy environment variables; Chromium and Electron apps also get `--proxy-server`, `--host-resolver-rules` (no local DNS) and a WebRTC policy that forbids UDP around the proxy. Browsers also get `--test-type`, which hides their "unsupported command-line flag" bar about `--host-resolver-rules`; it also switches off a few conveniences in the VPN windows, such as "Show in Finder" for downloads on macOS.
 
 The two systems offer different tools for this, so the same design is built differently:
 
@@ -132,6 +134,7 @@ On both systems:
 
 macOS:
 
+- Blocking direct connections uses `sandbox-exec`, which Apple has deprecated, and a process can be in one sandbox only. Apps that set up their own cannot start under it, so the button is not offered for Chromium browsers, Electron apps, apps with an embedded Chromium (Spotify) and App Store apps. Some of Apple's own apps (Activity Monitor) are killed when not started by the system; AppVPN says so when a blocked launch fails. Only the app and what it starts itself are blocked: work the system does for it in another process, such as a web view's networking or a background download, is not. The app runs as a child of AppVPN, so macOS may name AppVPN in its permission prompts.
 - Each build carries whatever OpenVPN version Homebrew had at build time, so OpenVPN security updates reach users only through a new AppVPN build.
 
 Windows:
@@ -205,7 +208,7 @@ windows\test.ps1     # Windows
 |---|---|---|
 | The profile allowlist accepts ordinary client profiles and refuses anything that could run code or touch files as administrator | `test-launcher.sh`, which also checks that OpenVPN accepts the options `vpn.sh` adds | `windows/check`, with the Windows-only rules; needs `sh` (Git for Windows), also runs on a Mac |
 | Import, naming, rename, delete, URL rules, inlining of certificate files | `test-profiles.sh` | `AppVPN --selftest-profiles`, with removal of routing and DNS lines |
-| SOCKS5 and HTTP proxy paths, DNS over the pinned interface, failing closed with no tunnel | `AppVPN --selftest <interface>` | `AppVPN --selftest <interface index>` |
+| SOCKS5 and HTTP proxy paths, DNS over the pinned interface, failing closed with no tunnel; on macOS, a sandboxed program reaches the proxy and nothing else | `AppVPN --selftest <interface>` | `AppVPN --selftest <interface index>` |
 | Blocking whenever there is no tunnel; a browser does not fall back to a direct connection | `test-killswitch.py` plays OpenVPN's management interface: before connect, while reconnecting, after OpenVPN stops, after AppVPN quits; Chrome | `test-killswitch.ps1`: before connect and after AppVPN quits; a stranger on the management port is ignored; Edge (unelevated session only) |
 | A real tunnel: start as administrator, the tunnel's route, untouched system routes and DNS, proxy traffic entering the tunnel while direct traffic stays out, blocking when the server dies, automatic reconnect, disconnect | `test-e2e.sh`, needs passwordless `sudo` | `test-e2e.ps1`, needs an elevated PowerShell and OpenVPN; its server also pushes both DNS forms, `block-outside-dns`, `ip-win32` and `route-method` |
 
